@@ -1,0 +1,65 @@
+spring:
+  application:
+    name: jingdezhen-tourism-platform
+  
+  # 数据源配置
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://localhost:3306/jingdezhen_tourism?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
+    username: root
+    password: 031010Sra
+  
+  # Redis配置（暂时注释，等需要时再启用）
+#  data:
+#    redis:
+#      host: localhost
+#      port: 6379
+#      password: 
+#      database: 0
+#      timeout: 3000ms
+  
+  # AI配置 - DeepSeek（暂时注释，等需要时再启用）
+  # 使用方法：
+  # 1. 取消下面的注释
+  # 2. 将 your-deepseek-api-key 替换为您的DeepSeek API Key
+  # 3. 在pom.xml中取消spring-ai-openai-spring-boot-starter的注释
+#  ai:
+#    openai:
+#      api-key: ${DEEPSEEK_API_KEY:your-deepseek-api-key}
+#      base-url: https://api.deepseek.com
+#      chat:
+#        options:
+#          model: deepseek-chat
+#          temperature: 0.7
+
+# MyBatis Plus配置
+mybatis-plus:
+  mapper-locations: classpath:mapper/*.xml
+  type-aliases-package: com.jingdezhen.tourism.entity
+  configuration:
+    map-underscore-to-camel-case: true
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+  global-config:
+    db-config:
+      id-type: auto
+      logic-delete-field: deleted
+      logic-delete-value: 1
+      logic-not-delete-value: 0
+
+# 服务器配置
+server:
+  port: 8080
+  servlet:
+    context-path: /api
+
+# JWT配置
+jwt:
+  secret: jingdezhen-tourism-platform-secret-key-2024
+  expiration: 604800000  # 7天（毫秒）
+
+# 日志配置
+logging:
+  level:
+    com.jingdezhen.tourism: debug
+    org.springframework.security: debug
+
