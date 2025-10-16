@@ -49,6 +49,57 @@ const routes = [
     name: 'Register',
     component: () => import('@/views/Register.vue'),
     meta: { title: '注册' }
+  },
+  // 商户端路由
+  {
+    path: '/merchant/login',
+    name: 'MerchantLogin',
+    component: () => import('@/views/merchant/MerchantLogin.vue'),
+    meta: { title: '商户登录' }
+  },
+  {
+    path: '/merchant/register',
+    name: 'MerchantRegister',
+    component: () => import('@/views/merchant/MerchantRegister.vue'),
+    meta: { title: '商户注册' }
+  },
+  {
+    path: '/merchant',
+    component: () => import('@/views/merchant/MerchantLayout.vue'),
+    redirect: '/merchant/dashboard',
+    meta: { requireMerchantAuth: true },
+    children: [
+      {
+        path: 'dashboard',
+        name: 'MerchantDashboard',
+        component: () => import('@/views/merchant/Dashboard.vue'),
+        meta: { title: '商户工作台' }
+      },
+      {
+        path: 'shop',
+        name: 'MerchantShopInfo',
+        component: () => import('@/views/merchant/ShopInfo.vue'),
+        meta: { title: '店铺信息' }
+      },
+      {
+        path: 'products',
+        name: 'MerchantProducts',
+        component: () => import('@/views/merchant/ProductManage.vue'),
+        meta: { title: '产品管理' }
+      },
+      {
+        path: 'orders',
+        name: 'MerchantOrders',
+        component: () => import('@/views/merchant/OrderManage.vue'),
+        meta: { title: '订单管理' }
+      },
+      {
+        path: 'reviews',
+        name: 'MerchantReviews',
+        component: () => import('@/views/merchant/ReviewManage.vue'),
+        meta: { title: '评价管理' }
+      }
+    ]
   }
 ]
 
@@ -62,11 +113,20 @@ router.beforeEach((to, from, next) => {
   // 设置页面标题
   document.title = to.meta.title ? `${to.meta.title} - 景德镇文旅服务平台` : '景德镇文旅服务平台'
   
-  // 检查是否需要登录
+  // 检查用户端是否需要登录
   if (to.meta.requireAuth) {
     const token = localStorage.getItem('token')
     if (!token) {
       next('/login')
+      return
+    }
+  }
+  
+  // 检查商户端是否需要登录
+  if (to.meta.requireMerchantAuth) {
+    const merchantToken = localStorage.getItem('merchantToken')
+    if (!merchantToken) {
+      next('/merchant/login')
       return
     }
   }

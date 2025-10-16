@@ -5,9 +5,16 @@ spring:
   # 数据源配置
   datasource:
     driver-class-name: com.mysql.cj.jdbc.Driver
-    url: jdbc:mysql://localhost:3306/jingdezhen_tourism?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
+    url: jdbc:mysql://localhost:3306/jingdezhen_tourism?useUnicode=true&characterEncoding=UTF-8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
     username: root
     password: 031010Sra
+  
+  # 文件上传配置
+  servlet:
+    multipart:
+      enabled: true
+      max-file-size: 10MB
+      max-request-size: 10MB
   
   # Redis配置（暂时注释，等需要时再启用）
 #  data:
@@ -57,9 +64,14 @@ jwt:
   secret: jingdezhen-tourism-platform-secret-key-2024
   expiration: 604800000  # 7天（毫秒）
 
-# 日志配置
+# 文件上传配置
+file:
+  upload:
+    path: ./uploads/  # 文件上传路径
+    base-url: http://localhost:8080/api/file/  # 文件访问基础URL
+
+  # 日志配置
 logging:
   level:
     com.jingdezhen.tourism: debug
     org.springframework.security: debug
-

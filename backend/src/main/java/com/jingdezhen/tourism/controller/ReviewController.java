@@ -3,7 +3,7 @@ package com.jingdezhen.tourism.controller;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.jingdezhen.tourism.dto.ReviewCreateDTO;
 import com.jingdezhen.tourism.service.ReviewService;
-import com.jingdezhen.tourism.utils.JwtUtil;
+import com.jingdezhen.tourism.utils.TokenUtil;
 import com.jingdezhen.tourism.vo.ReviewVO;
 import com.jingdezhen.tourism.vo.Result;
 import lombok.RequiredArgsConstructor;
@@ -19,22 +19,24 @@ import org.springframework.web.bind.annotation.*;
 public class ReviewController {
 
     private final ReviewService reviewService;
-    private final JwtUtil jwtUtil;
+    private final TokenUtil tokenUtil;
 
     /**
      * 创建评价
+     * 需要登录
      */
     @PostMapping("/create")
     public Result<ReviewVO> createReview(
             @Validated @RequestBody ReviewCreateDTO dto,
-            @RequestHeader("Authorization") String token) {
-        Long userId = jwtUtil.getUserIdFromToken(token.replace("Bearer ", ""));
+            @RequestHeader("Authorization") String authHeader) {
+        Long userId = tokenUtil.getUserIdFromAuth(authHeader);
         ReviewVO review = reviewService.createReview(dto, userId);
         return Result.success("评价成功", review);
     }
 
     /**
      * 获取产品评价列表
+     * 不需要登录
      */
     @GetMapping("/product/{productId}")
     public Result<Page<ReviewVO>> getProductReviews(
@@ -48,26 +50,28 @@ public class ReviewController {
 
     /**
      * 获取我的评价列表
+     * 需要登录
      */
     @GetMapping("/my")
     public Result<Page<ReviewVO>> getMyReviews(
             @RequestParam(defaultValue = "1") Long current,
             @RequestParam(defaultValue = "10") Long size,
-            @RequestHeader("Authorization") String token
+            @RequestHeader("Authorization") String authHeader
     ) {
-        Long userId = jwtUtil.getUserIdFromToken(token.replace("Bearer ", ""));
+        Long userId = tokenUtil.getUserIdFromAuth(authHeader);
         Page<ReviewVO> page = reviewService.getUserReviews(userId, current, size);
         return Result.success(page);
     }
 
     /**
      * 删除评价
+     * 需要登录
      */
     @DeleteMapping("/{reviewId}")
     public Result<Void> deleteReview(
             @PathVariable Long reviewId,
-            @RequestHeader("Authorization") String token) {
-        Long userId = jwtUtil.getUserIdFromToken(token.replace("Bearer ", ""));
+            @RequestHeader("Authorization") String authHeader) {
+        Long userId = tokenUtil.getUserIdFromAuth(authHeader);
         reviewService.deleteReview(reviewId, userId);
         return Result.success("删除成功");
     }

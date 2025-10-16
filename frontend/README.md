@@ -89,6 +89,7 @@ npm install
 ### 开发模式
 
 ```bash
+cd frontend
 npm run dev
 ```
 
@@ -97,6 +98,7 @@ npm run dev
 ### 生产构建
 
 ```bash
+cd frontend
 npm run build
 ```
 

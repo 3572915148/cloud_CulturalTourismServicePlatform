@@ -80,6 +80,34 @@
         </div>
       </div>
 
+      <!-- 商户入驻 -->
+      <div class="section merchant-section">
+        <el-card class="merchant-card" shadow="hover">
+          <div class="merchant-content">
+            <div class="merchant-left">
+              <el-icon :size="80" color="#F56C6C"><Shop /></el-icon>
+            </div>
+            <div class="merchant-center">
+              <h2>商户入驻</h2>
+              <p>加入景德镇文旅服务平台，开启您的线上业务</p>
+              <ul class="merchant-benefits">
+                <li><el-icon><Check /></el-icon> 免费入驻，快速开店</li>
+                <li><el-icon><Check /></el-icon> 海量用户，精准营销</li>
+                <li><el-icon><Check /></el-icon> 专业服务，贴心支持</li>
+              </ul>
+            </div>
+            <div class="merchant-right">
+              <el-button type="warning" size="large" @click="router.push('/merchant/register')">
+                立即入驻
+              </el-button>
+              <el-button type="default" size="large" @click="router.push('/merchant/login')">
+                商户登录
+              </el-button>
+            </div>
+          </div>
+        </el-card>
+      </div>
+
       <!-- 平台特色 -->
       <div class="section">
         <h2 class="section-title">平台特色</h2>
@@ -115,6 +143,7 @@ import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { getProductList } from '@/api/product'
 import { ElMessage } from 'element-plus'
+import { Shop, Check } from '@element-plus/icons-vue'
 
 const router = useRouter()
 const loading = ref(false)
@@ -397,6 +426,91 @@ onMounted(() => {
 .feature-item p {
   font-size: 14px;
   color: #666;
+}
+
+/* 商户入驻卡片 */
+.merchant-section {
+  margin: 48px 0;
+}
+
+.merchant-card {
+  background: linear-gradient(135deg, #fff5f5 0%, #fff9e6 100%);
+  border: none;
+}
+
+.merchant-content {
+  display: flex;
+  align-items: center;
+  gap: 40px;
+  padding: 20px;
+}
+
+.merchant-left {
+  flex-shrink: 0;
+}
+
+.merchant-center {
+  flex: 1;
+}
+
+.merchant-center h2 {
+  font-size: 32px;
+  font-weight: 600;
+  color: #333;
+  margin-bottom: 12px;
+}
+
+.merchant-center > p {
+  font-size: 16px;
+  color: #666;
+  margin-bottom: 20px;
+}
+
+.merchant-benefits {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.merchant-benefits li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  color: #666;
+}
+
+.merchant-benefits li .el-icon {
+  color: #67C23A;
+}
+
+.merchant-right {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.merchant-right .el-button {
+  width: 160px;
+}
+
+@media (max-width: 768px) {
+  .merchant-content {
+    flex-direction: column;
+    text-align: center;
+  }
+
+  .merchant-right {
+    width: 100%;
+  }
+
+  .merchant-right .el-button {
+    width: 100%;
+  }
 }
 </style>
 

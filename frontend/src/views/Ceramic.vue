@@ -36,7 +36,7 @@
             <p class="content-summary">{{ item.summary }}</p>
             <div class="content-meta">
               <span class="author">{{ item.author }}</span>
-              <span class="date">{{ formatDate(item.publishTime) }}</span>
+              <span class="date">{{ formatDate(item.createTime) }}</span>
               <span class="views">
                 <el-icon><View /></el-icon>
                 {{ item.views || 0 }}
@@ -71,7 +71,7 @@
         <div class="detail-meta">
           <el-tag type="info">{{ getCategoryLabel(currentContent.category) }}</el-tag>
           <span class="author">作者：{{ currentContent.author }}</span>
-          <span class="date">{{ formatDate(currentContent.publishTime) }}</span>
+          <span class="date">{{ formatDate(currentContent.createTime) }}</span>
         </div>
         
         <div class="detail-image" v-if="currentContent.coverImage">
@@ -86,6 +86,8 @@
 
 <script setup>
 import { ref, reactive, onMounted } from 'vue'
+import { getCeramicContentList, incrementCeramicViews } from '@/api/ceramic'
+import { ElMessage } from 'element-plus'
 
 const loading = ref(false)
 const activeCategory = ref('all')
@@ -99,76 +101,6 @@ const pagination = reactive({
   total: 0
 })
 
-// 模拟数据
-const mockData = [
-  {
-    id: 1,
-    title: '景德镇陶瓷的千年历史',
-    summary: '景德镇陶瓷历史悠久，始于汉世，盛于唐宋，鼎盛于明清。作为中国陶瓷艺术的重要发源地之一...',
-    category: 'history',
-    author: '陶瓷研究院',
-    publishTime: '2024-01-15',
-    views: 1234,
-    coverImage: 'https://images.unsplash.com/photo-1578662996442-48f60103fc96?w=800&auto=format&fit=crop',
-    content: '<p>景德镇陶瓷历史悠久，始于汉世，盛于唐宋，鼎盛于明清...</p>'
-  },
-  {
-    id: 2,
-    title: '青花瓷的制作工艺',
-    summary: '青花瓷是景德镇四大传统名瓷之一，其制作工艺精湛，需要经过选料、练泥、拉坯、印坯、利坯等72道工序...',
-    category: 'craft',
-    author: '大师工作室',
-    publishTime: '2024-02-01',
-    views: 856,
-    coverImage: 'https://images.unsplash.com/photo-1610701596007-11502861dcfa?w=800&auto=format&fit=crop',
-    content: '<p>青花瓷是景德镇四大传统名瓷之一...</p>'
-  },
-  {
-    id: 3,
-    title: '当代陶瓷艺术名家',
-    summary: '景德镇汇聚了众多陶瓷艺术大师，他们继承传统技艺的同时，不断创新，为陶瓷艺术注入新的活力...',
-    category: 'master',
-    author: '艺术评论家',
-    publishTime: '2024-02-10',
-    views: 678,
-    coverImage: 'https://images.unsplash.com/photo-1525974160448-038dacadcc71?w=800&auto=format&fit=crop',
-    content: '<p>景德镇汇聚了众多陶瓷艺术大师...</p>'
-  },
-  {
-    id: 4,
-    title: '陶瓷文化的传承与创新',
-    summary: '在保护和传承传统陶瓷文化的同时，景德镇也在积极探索创新之路，让千年瓷都焕发新的生机...',
-    category: 'culture',
-    author: '文化学者',
-    publishTime: '2024-02-20',
-    views: 945,
-    coverImage: 'https://images.unsplash.com/photo-1493106819501-66d381c466f1?w=800&auto=format&fit=crop',
-    content: '<p>在保护和传承传统陶瓷文化的同时...</p>'
-  },
-  {
-    id: 5,
-    title: '明清官窑瓷器欣赏',
-    summary: '明清时期是景德镇陶瓷发展的鼎盛时期，官窑瓷器代表了当时最高的制作水平...',
-    category: 'history',
-    author: '陶瓷博物馆',
-    publishTime: '2024-03-01',
-    views: 1567,
-    coverImage: 'https://images.unsplash.com/photo-1610725664285-7c57e6eeac3f?w=800&auto=format&fit=crop',
-    content: '<p>明清时期是景德镇陶瓷发展的鼎盛时期...</p>'
-  },
-  {
-    id: 6,
-    title: '釉下彩绘技艺解析',
-    summary: '釉下彩绘是景德镇传统装饰技法之一，需要在素坯上进行绘画，再施釉后高温烧制...',
-    category: 'craft',
-    author: '工艺传承人',
-    publishTime: '2024-03-10',
-    views: 723,
-    coverImage: 'https://images.unsplash.com/photo-1565193566173-7a0ee3dbe261?w=800&auto=format&fit=crop',
-    content: '<p>釉下彩绘是景德镇传统装饰技法之一...</p>'
-  }
-]
-
 const categoryLabels = {
   history: '陶瓷历史',
   craft: '制作工艺',
@@ -181,26 +113,35 @@ const getCategoryLabel = (category) => {
 }
 
 const formatDate = (date) => {
-  return date || '-'
+  if (!date) return '-'
+  return new Date(date).toLocaleDateString('zh-CN')
 }
 
 // 获取内容列表
-const fetchContent = () => {
+const fetchContent = async () => {
   loading.value = true
-  
-  setTimeout(() => {
-    let filteredData = mockData
-    if (activeCategory.value !== 'all') {
-      filteredData = mockData.filter(item => item.category === activeCategory.value)
+  try {
+    const params = {
+      current: pagination.current,
+      size: pagination.size
     }
     
-    const start = (pagination.current - 1) * pagination.size
-    const end = start + pagination.size
+    // 如果不是"全部"分类，添加category参数
+    if (activeCategory.value !== 'all') {
+      params.category = activeCategory.value
+    }
     
-    contentList.value = filteredData.slice(start, end)
-    pagination.total = filteredData.length
+    const res = await getCeramicContentList(params)
+    if (res.data) {
+      contentList.value = res.data.records || []
+      pagination.total = res.data.total || 0
+    }
+  } catch (error) {
+    console.error('获取陶瓷文化内容失败：', error)
+    ElMessage.error('获取内容失败，请稍后重试')
+  } finally {
     loading.value = false
-  }, 500)
+  }
 }
 
 // 切换分类
@@ -210,9 +151,19 @@ const handleCategoryChange = () => {
 }
 
 // 查看详情
-const handleViewDetail = (item) => {
+const handleViewDetail = async (item) => {
   currentContent.value = item
   detailDialogVisible.value = true
+  
+  // 增加浏览量
+  try {
+    await incrementCeramicViews(item.id)
+    // 更新本地浏览量显示
+    item.views = (item.views || 0) + 1
+  } catch (error) {
+    console.error('增加浏览量失败：', error)
+    // 不影响用户体验，静默失败
+  }
 }
 
 onMounted(() => {

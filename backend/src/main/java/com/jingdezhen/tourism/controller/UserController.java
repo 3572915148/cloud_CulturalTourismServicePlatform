@@ -1,8 +1,11 @@
 package com.jingdezhen.tourism.controller;
 
+import com.jingdezhen.tourism.dto.PasswordChangeDTO;
 import com.jingdezhen.tourism.dto.UserLoginDTO;
 import com.jingdezhen.tourism.dto.UserRegisterDTO;
+import com.jingdezhen.tourism.dto.UserUpdateDTO;
 import com.jingdezhen.tourism.service.UserService;
+import com.jingdezhen.tourism.utils.TokenUtil;
 import com.jingdezhen.tourism.vo.Result;
 import com.jingdezhen.tourism.vo.UserVO;
 import lombok.RequiredArgsConstructor;
@@ -18,6 +21,7 @@ import org.springframework.web.bind.annotation.*;
 public class UserController {
 
     private final UserService userService;
+    private final TokenUtil tokenUtil;
 
     /**
      * 用户注册
@@ -44,6 +48,54 @@ public class UserController {
     public Result<UserVO> getUserInfo(@PathVariable Long id) {
         UserVO userVO = userService.getUserById(id);
         return Result.success(userVO);
+    }
+
+    /**
+     * 获取当前登录用户信息
+     * 需要登录
+     */
+    @GetMapping("/info")
+    public Result<UserVO> getCurrentUserInfo(@RequestHeader("Authorization") String authHeader) {
+        Long userId = tokenUtil.getUserIdFromAuth(authHeader);
+        UserVO userVO = userService.getUserById(userId);
+        return Result.success(userVO);
+    }
+
+    /**
+     * 更新用户信息
+     * 需要登录
+     */
+    @PutMapping("/update")
+    public Result<UserVO> updateUserInfo(
+            @RequestHeader("Authorization") String authHeader,
+            @Validated @RequestBody UserUpdateDTO dto) {
+        Long userId = tokenUtil.getUserIdFromAuth(authHeader);
+        UserVO userVO = userService.updateUserInfo(userId, dto);
+        return Result.success("更新成功", userVO);
+    }
+
+    /**
+     * 修改密码
+     * 需要登录
+     */
+    @PutMapping("/password")
+    public Result<Void> changePassword(
+            @RequestHeader("Authorization") String authHeader,
+            @Validated @RequestBody PasswordChangeDTO dto) {
+        Long userId = tokenUtil.getUserIdFromAuth(authHeader);
+        userService.changePassword(userId, dto);
+        return Result.success("密码修改成功");
+    }
+
+    /**
+     * 注销账号
+     * 需要登录
+     */
+    @DeleteMapping("/delete")
+    public Result<Void> deleteAccount(@RequestHeader("Authorization") String authHeader) {
+        Long userId = tokenUtil.getUserIdFromAuth(authHeader);
+        userService.deleteAccount(userId);
+        return Result.success("账号已注销");
     }
 }
 

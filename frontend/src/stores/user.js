@@ -38,12 +38,22 @@ export const useUserStore = defineStore('user', () => {
     localStorage.removeItem('userInfo')
   }
 
+  // 更新用户信息
+  const updateUserInfo = (newInfo) => {
+    userInfo.value = {
+      ...userInfo.value,
+      ...newInfo
+    }
+    localStorage.setItem('userInfo', JSON.stringify(userInfo.value))
+  }
+
   return {
     token,
     userInfo,
     isLoggedIn,
     login,
-    logout
+    logout,
+    updateUserInfo
   }
 })
 

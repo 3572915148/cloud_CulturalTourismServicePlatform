@@ -33,6 +33,16 @@ export function getUserInfo(id) {
 }
 
 /**
+ * 获取当前登录用户信息
+ */
+export function getCurrentUserInfo() {
+  return request({
+    url: '/user/info',
+    method: 'get'
+  })
+}
+
+/**
  * 更新用户信息
  */
 export function updateUserInfo(data) {

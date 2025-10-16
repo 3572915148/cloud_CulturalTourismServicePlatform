@@ -1,10 +1,12 @@
 package com.jingdezhen.tourism.utils;
 
+import com.jingdezhen.tourism.exception.BusinessException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
+import org.springframework.util.StringUtils;
 
 /**
- * Token工具类 - 用于从HTTP请求头中获取用户信息
+ * Token工具类
  */
 @Component
 @RequiredArgsConstructor
@@ -13,42 +15,62 @@ public class TokenUtil {
     private final JwtUtil jwtUtil;
 
     /**
-     * 从Authorization头中获取用户ID
-     * @param authorizationHeader Authorization头的值（格式：Bearer token）
+     * 从请求头中获取并验证Token，返回用户ID
+     * 
+     * @param authHeader Authorization请求头
      * @return 用户ID
+     * @throws BusinessException 如果Token无效或不存在
      */
-    public Long getUserIdFromHeader(String authorizationHeader) {
-        if (authorizationHeader == null || !authorizationHeader.startsWith("Bearer ")) {
-            throw new IllegalArgumentException("Invalid Authorization header");
+    public Long getUserIdFromAuth(String authHeader) {
+        // 检查Authorization头是否存在
+        if (!StringUtils.hasText(authHeader)) {
+            throw new BusinessException("未登录，请先登录");
         }
-        String token = authorizationHeader.replace("Bearer ", "");
-        return jwtUtil.getUserIdFromToken(token);
+
+        // 去掉 "Bearer " 前缀
+        String token = authHeader;
+        if (authHeader.startsWith("Bearer ")) {
+            token = authHeader.substring(7);
+        }
+
+        // 验证Token是否有效
+        if (!jwtUtil.validateToken(token)) {
+            throw new BusinessException("登录已过期，请重新登录");
+        }
+
+        // 获取用户ID
+        try {
+            return jwtUtil.getUserIdFromToken(token);
+        } catch (Exception e) {
+            throw new BusinessException("Token解析失败，请重新登录");
+        }
     }
 
     /**
-     * 从Authorization头中获取用户名
-     * @param authorizationHeader Authorization头的值（格式：Bearer token）
-     * @return 用户名
+     * 从请求头中获取Token（不验证，允许为空）
+     * 用于可选登录的场景
+     * 
+     * @param authHeader Authorization请求头
+     * @return 用户ID，如果未登录返回null
      */
-    public String getUsernameFromHeader(String authorizationHeader) {
-        if (authorizationHeader == null || !authorizationHeader.startsWith("Bearer ")) {
-            throw new IllegalArgumentException("Invalid Authorization header");
-        }
-        String token = authorizationHeader.replace("Bearer ", "");
-        return jwtUtil.getUsernameFromToken(token);
-    }
+    public Long getUserIdFromAuthOptional(String authHeader) {
+        try {
+            if (!StringUtils.hasText(authHeader)) {
+                return null;
+            }
 
-    /**
-     * 从Authorization头中获取用户类型
-     * @param authorizationHeader Authorization头的值（格式：Bearer token）
-     * @return 用户类型
-     */
-    public String getUserTypeFromHeader(String authorizationHeader) {
-        if (authorizationHeader == null || !authorizationHeader.startsWith("Bearer ")) {
-            throw new IllegalArgumentException("Invalid Authorization header");
+            String token = authHeader;
+            if (authHeader.startsWith("Bearer ")) {
+                token = authHeader.substring(7);
+            }
+
+            if (!jwtUtil.validateToken(token)) {
+                return null;
+            }
+
+            return jwtUtil.getUserIdFromToken(token);
+        } catch (Exception e) {
+            return null;
         }
-        String token = authorizationHeader.replace("Bearer ", "");
-        return jwtUtil.getUserTypeFromToken(token);
     }
 }
-

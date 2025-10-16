@@ -20,10 +20,20 @@
         </el-menu>
         
         <div class="user-actions">
+          <!-- 商户入口 -->
+          <el-button 
+            type="warning" 
+            :icon="Shop" 
+            @click="router.push('/merchant/login')"
+            style="margin-right: 16px"
+          >
+            商户中心
+          </el-button>
+
           <template v-if="userStore.isLoggedIn">
             <el-dropdown @command="handleUserCommand">
               <div class="user-info">
-                <el-avatar :size="32">
+                <el-avatar :size="32" :src="userStore.userInfo.avatar">
                   {{ userStore.userInfo.nickname?.charAt(0) || 'U' }}
                 </el-avatar>
                 <span class="username">{{ userStore.userInfo.nickname || userStore.userInfo.username }}</span>
@@ -68,6 +78,11 @@
             <a href="#">帮助中心</a>
             <a href="#">用户协议</a>
           </div>
+          <div class="link-group">
+            <h4>商户服务</h4>
+            <a @click="router.push('/merchant/login')" style="cursor: pointer">商户登录</a>
+            <a @click="router.push('/merchant/register')" style="cursor: pointer">商户入驻</a>
+          </div>
         </div>
       </div>
       <div class="copyright">
@@ -82,6 +97,7 @@ import { ref, computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useUserStore } from '@/stores/user'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { Shop } from '@element-plus/icons-vue'
 
 const router = useRouter()
 const route = useRoute()

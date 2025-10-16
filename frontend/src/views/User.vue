@@ -2,7 +2,7 @@
   <div class="user-page">
     <div class="user-header">
       <div class="user-info-card">
-        <el-avatar :size="80">
+        <el-avatar :size="80" :src="userForm.avatar || userStore.userInfo.avatar">
           {{ userStore.userInfo.nickname?.charAt(0) || 'U' }}
         </el-avatar>
         <div class="user-details">
@@ -36,6 +36,27 @@
               label-width="100px"
               style="max-width: 600px"
             >
+              <!-- 头像上传 -->
+              <el-form-item label="头像">
+                <div class="avatar-upload">
+                  <el-upload
+                    class="avatar-uploader"
+                    :show-file-list="false"
+                    :on-success="handleAvatarSuccess"
+                    :before-upload="beforeAvatarUpload"
+                    :http-request="uploadAvatar"
+                    accept="image/*"
+                  >
+                    <img v-if="userForm.avatar" :src="userForm.avatar" class="avatar" />
+                    <el-icon v-else class="avatar-uploader-icon"><Plus /></el-icon>
+                  </el-upload>
+                  <div class="avatar-tip">
+                    <p>支持 JPG、PNG 格式</p>
+                    <p>文件大小不超过 2MB</p>
+                  </div>
+                </div>
+              </el-form-item>
+
               <el-form-item label="用户名">
                 <el-input v-model="userForm.username" disabled />
               </el-form-item>
@@ -60,9 +81,20 @@
                 </el-radio-group>
               </el-form-item>
               
+              <el-form-item label="生日">
+                <el-date-picker
+                  v-model="userForm.birthday"
+                  type="date"
+                  placeholder="选择生日"
+                  format="YYYY-MM-DD"
+                  value-format="YYYY-MM-DD"
+                  style="width: 100%"
+                />
+              </el-form-item>
+              
               <el-form-item label="个人简介">
                 <el-input
-                  v-model="userForm.bio"
+                  v-model="userForm.introduction"
                   type="textarea"
                   :rows="4"
                   placeholder="介绍一下自己吧"
@@ -305,18 +337,22 @@
           <div class="tab-content">
             <div class="settings-section">
               <h3>修改密码</h3>
+              <p class="info-text">为了您的账号安全，修改密码需要验证您的手机号</p>
               <el-form
                 :model="passwordForm"
                 label-width="100px"
                 style="max-width: 600px"
               >
-                <el-form-item label="原密码">
+                <el-form-item label="手机号">
                   <el-input
-                    v-model="passwordForm.oldPassword"
-                    type="password"
-                    placeholder="请输入原密码"
-                    show-password
-                  />
+                    v-model="passwordForm.phone"
+                    placeholder="请输入手机号码进行验证"
+                    maxlength="11"
+                  >
+                    <template #prefix>
+                      <el-icon><Phone /></el-icon>
+                    </template>
+                  </el-input>
                 </el-form-item>
                 
                 <el-form-item label="新密码">
@@ -368,7 +404,8 @@ import { useUserStore } from '@/stores/user'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { createFeedback, getMyFeedbacks } from '@/api/feedback'
 import { getMyOrders, cancelOrder, finishOrder } from '@/api/order'
-import { updateUserInfo, changePassword, deleteAccount } from '@/api/user'
+import { getCurrentUserInfo, updateUserInfo, changePassword, deleteAccount } from '@/api/user'
+import { uploadFile } from '@/api/file'
 
 const router = useRouter()
 const userStore = useUserStore()
@@ -380,8 +417,10 @@ const userForm = reactive({
   nickname: userStore.userInfo.nickname || '',
   phone: userStore.userInfo.phone || '',
   email: userStore.userInfo.email || '',
-  gender: 0,
-  bio: ''
+  avatar: userStore.userInfo.avatar || '',
+  gender: userStore.userInfo.gender || 0,
+  birthday: userStore.userInfo.birthday || '',
+  introduction: userStore.userInfo.introduction || ''
 })
 
 const feedbackForm = reactive({
@@ -398,7 +437,7 @@ const orderLoading = ref(false)
 const orderStatus = ref(null)
 
 const passwordForm = reactive({
-  oldPassword: '',
+  phone: '',
   newPassword: '',
   confirmPassword: ''
 })
@@ -412,23 +451,74 @@ const favoritesList = computed(() => {
   return allFavorites.filter(item => item.userId === userStore.userInfo.id)
 })
 
+// 头像上传前的验证
+const beforeAvatarUpload = (file) => {
+  const isImage = file.type.startsWith('image/')
+  const isLt2M = file.size / 1024 / 1024 < 2
+
+  if (!isImage) {
+    ElMessage.error('只能上传图片文件!')
+    return false
+  }
+  if (!isLt2M) {
+    ElMessage.error('图片大小不能超过 2MB!')
+    return false
+  }
+  return true
+}
+
+// 自定义上传方法
+const uploadAvatar = async ({ file }) => {
+  try {
+    const response = await uploadFile(file)
+    if (response.data) {
+      userForm.avatar = response.data
+      ElMessage.success('头像上传成功')
+      
+      // 自动保存头像到服务器
+      await updateUserInfo({
+        avatar: response.data
+      })
+      
+      // 更新本地用户信息
+      userStore.updateUserInfo({ avatar: response.data })
+    }
+  } catch (error) {
+    console.error('头像上传失败：', error)
+    ElMessage.error('头像上传失败，请重试')
+  }
+}
+
+// 头像上传成功回调
+const handleAvatarSuccess = (response) => {
+  if (response.data) {
+    userForm.avatar = response.data
+  }
+}
+
 // 更新个人信息
 const handleUpdateInfo = async () => {
   try {
-    // 注意：这里假设后端有这个接口，如果没有，会返回404
-    // 可以先注释掉实际调用，只更新本地store
-    // await updateUserInfo(userForm)
+    // 调用后端API更新用户信息
+    const response = await updateUserInfo({
+      nickname: userForm.nickname,
+      phone: userForm.phone,
+      email: userForm.email,
+      avatar: userForm.avatar,
+      gender: userForm.gender,
+      birthday: userForm.birthday,
+      introduction: userForm.introduction
+    })
     
     // 更新本地用户信息
-    userStore.userInfo.nickname = userForm.nickname
-    userStore.userInfo.phone = userForm.phone
-    userStore.userInfo.email = userForm.email
-    userStore.userInfo.gender = userForm.gender
+    if (response.data) {
+      userStore.updateUserInfo(response.data)
+    }
     
     ElMessage.success('个人信息更新成功')
   } catch (error) {
     console.error('更新个人信息失败：', error)
-    ElMessage.error('更新失败，请稍后重试')
+    ElMessage.error(error.response?.data?.message || '更新失败，请稍后重试')
   }
 }
 
@@ -463,10 +553,18 @@ const handleResetFeedback = () => {
 
 // 修改密码
 const handleChangePassword = async () => {
-  if (!passwordForm.oldPassword) {
-    ElMessage.warning('请输入原密码')
+  // 验证手机号
+  if (!passwordForm.phone) {
+    ElMessage.warning('请输入手机号码')
     return
   }
+  const phoneRegex = /^1[3-9]\d{9}$/
+  if (!phoneRegex.test(passwordForm.phone)) {
+    ElMessage.warning('请输入正确的手机号码')
+    return
+  }
+  
+  // 验证新密码
   if (!passwordForm.newPassword) {
     ElMessage.warning('请输入新密码')
     return
@@ -475,27 +573,35 @@ const handleChangePassword = async () => {
     ElMessage.warning('密码长度必须在6-20位之间')
     return
   }
+  
+  // 验证确认密码
   if (passwordForm.newPassword !== passwordForm.confirmPassword) {
     ElMessage.warning('两次输入的密码不一致')
     return
   }
   
   try {
-    // 注意：这里假设后端有这个接口，如果没有，会返回404
-    // 可以先注释掉实际调用
-    // await changePassword({
-    //   oldPassword: passwordForm.oldPassword,
-    //   newPassword: passwordForm.newPassword
-    // })
+    // 调用后端API修改密码（只需手机号验证，不需要原密码）
+    await changePassword({
+      phone: passwordForm.phone,
+      newPassword: passwordForm.newPassword
+    })
     
     ElMessage.success('密码修改成功，请重新登录')
+    
+    // 清空表单
+    passwordForm.phone = ''
+    passwordForm.newPassword = ''
+    passwordForm.confirmPassword = ''
+    
+    // 延迟后退出登录
     setTimeout(() => {
       userStore.logout()
       router.push('/login')
     }, 1500)
   } catch (error) {
     console.error('修改密码失败：', error)
-    ElMessage.error('密码修改失败，请检查原密码是否正确')
+    ElMessage.error(error.response?.data?.message || '修改密码失败，请检查手机号是否正确')
   }
 }
 
@@ -512,16 +618,15 @@ const handleDeleteAccount = () => {
     }
   ).then(async () => {
     try {
-      // 注意：这里假设后端有这个接口，如果没有，会返回404
-      // 可以先注释掉实际调用
-      // await deleteAccount()
+      // 调用后端API注销账号
+      await deleteAccount()
       
       ElMessage.success('账号已注销')
       userStore.logout()
       router.push('/home')
     } catch (error) {
       console.error('注销账号失败：', error)
-      ElMessage.error('注销失败，请稍后重试')
+      ElMessage.error(error.response?.data?.message || '注销失败，请稍后重试')
     }
   }).catch(() => {
     // 用户取消操作
@@ -688,7 +793,46 @@ watch(activeTab, (newVal) => {
   }
 })
 
+// 获取用户信息并填充表单
+const fetchUserInfo = async () => {
+  try {
+    const response = await getCurrentUserInfo()
+    if (response.data) {
+      const userData = response.data
+      
+      // 更新 userStore
+      userStore.updateUserInfo(userData)
+      
+      // 更新表单数据
+      userForm.username = userData.username || ''
+      userForm.nickname = userData.nickname || ''
+      userForm.phone = userData.phone || ''
+      userForm.email = userData.email || ''
+      userForm.avatar = userData.avatar || ''
+      userForm.gender = userData.gender || 0
+      userForm.birthday = userData.birthday || ''
+      userForm.introduction = userData.introduction || ''
+    }
+  } catch (error) {
+    console.error('获取用户信息失败：', error)
+    // 如果获取失败，尝试从 localStorage 读取
+    const cachedUserInfo = userStore.userInfo
+    if (cachedUserInfo.id) {
+      userForm.username = cachedUserInfo.username || ''
+      userForm.nickname = cachedUserInfo.nickname || ''
+      userForm.phone = cachedUserInfo.phone || ''
+      userForm.email = cachedUserInfo.email || ''
+      userForm.gender = cachedUserInfo.gender || 0
+      userForm.birthday = cachedUserInfo.birthday || ''
+      userForm.introduction = cachedUserInfo.introduction || ''
+    }
+  }
+}
+
 onMounted(() => {
+  // 获取用户信息
+  fetchUserInfo()
+  
   if (activeTab.value === 'feedback') {
     fetchMyFeedbacks()
   }
@@ -703,6 +847,51 @@ onMounted(() => {
 
 .user-header {
   margin-bottom: 24px;
+}
+
+/* 头像上传样式 */
+.avatar-upload {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
+.avatar-uploader {
+  border: 2px dashed #d9d9d9;
+  border-radius: 6px;
+  cursor: pointer;
+  overflow: hidden;
+  transition: border-color 0.3s;
+}
+
+.avatar-uploader:hover {
+  border-color: #409eff;
+}
+
+.avatar {
+  width: 120px;
+  height: 120px;
+  display: block;
+  object-fit: cover;
+}
+
+.avatar-uploader-icon {
+  font-size: 28px;
+  color: #8c939d;
+  width: 120px;
+  height: 120px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.avatar-tip {
+  font-size: 12px;
+  color: #999;
+}
+
+.avatar-tip p {
+  margin: 4px 0;
 }
 
 .user-info-card {
@@ -785,6 +974,13 @@ onMounted(() => {
 
 .settings-section {
   margin: 32px 0;
+}
+
+.info-text {
+  color: #909399;
+  margin-bottom: 16px;
+  font-size: 14px;
+  line-height: 1.5;
 }
 
 .danger-text {
