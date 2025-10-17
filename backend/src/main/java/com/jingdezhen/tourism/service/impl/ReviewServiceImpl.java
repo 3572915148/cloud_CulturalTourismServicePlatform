@@ -53,13 +53,7 @@ public class ReviewServiceImpl implements ReviewService {
             throw new BusinessException("只有已完成的订单才能评价");
         }
 
-        // 检查是否已经评价过
-        LambdaQueryWrapper<Review> wrapper = new LambdaQueryWrapper<>();
-        wrapper.eq(Review::getOrderId, dto.getOrderId());
-        wrapper.eq(Review::getUserId, userId);
-        if (reviewMapper.selectCount(wrapper) > 0) {
-            throw new BusinessException("该订单已评价");
-        }
+        // 允许同一订单多次评价，移除了"已评价"检查
 
         // 创建评价
         Review review = new Review();
@@ -191,6 +185,69 @@ public class ReviewServiceImpl implements ReviewService {
 
         // 更新产品评分
         updateProductRating(review.getProductId());
+    }
+
+    @Override
+    public Page<ReviewVO> getMerchantReviews(Long merchantId, Long current, Long size) {
+        Page<Review> page = new Page<>(current, size);
+        LambdaQueryWrapper<Review> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(Review::getMerchantId, merchantId);
+        wrapper.orderByDesc(Review::getCreateTime);
+
+        Page<Review> reviewPage = reviewMapper.selectPage(page, wrapper);
+
+        // 关联用户与产品信息
+        List<Long> userIds = reviewPage.getRecords().stream().map(Review::getUserId).distinct().collect(Collectors.toList());
+        List<Long> productIds = reviewPage.getRecords().stream().map(Review::getProductId).distinct().collect(Collectors.toList());
+
+        Map<Long, User> userMap = new HashMap<>();
+        if (!userIds.isEmpty()) {
+            List<User> users = userMapper.selectBatchIds(userIds);
+            userMap = users.stream().collect(Collectors.toMap(User::getId, u -> u));
+        }
+
+        Map<Long, Product> productMap = new HashMap<>();
+        if (!productIds.isEmpty()) {
+            List<Product> products = productMapper.selectBatchIds(productIds);
+            productMap = products.stream().collect(Collectors.toMap(Product::getId, p -> p));
+        }
+
+        Map<Long, User> finalUserMap = userMap;
+        Map<Long, Product> finalProductMap = productMap;
+        List<ReviewVO> voList = reviewPage.getRecords().stream().map(review -> {
+            ReviewVO vo = new ReviewVO();
+            BeanUtils.copyProperties(review, vo);
+            User user = finalUserMap.get(review.getUserId());
+            if (user != null) {
+                vo.setUsername(user.getUsername());
+                vo.setNickname(user.getNickname());
+            }
+            Product product = finalProductMap.get(review.getProductId());
+            if (product != null) {
+                vo.setProductTitle(product.getTitle());
+            }
+            return vo;
+        }).collect(Collectors.toList());
+
+        Page<ReviewVO> voPage = new Page<>(reviewPage.getCurrent(), reviewPage.getSize(), reviewPage.getTotal());
+        voPage.setRecords(voList);
+        return voPage;
+    }
+
+    @Override
+    public void replyReview(Long reviewId, Long merchantId, String replyContent) {
+        Review review = reviewMapper.selectById(reviewId);
+        if (review == null) {
+            throw new BusinessException("评价不存在");
+        }
+        if (!merchantId.equals(review.getMerchantId())) {
+            throw new BusinessException("无权回复他人产品的评价");
+        }
+        Review update = new Review();
+        update.setId(reviewId);
+        update.setReplyContent(replyContent);
+        update.setReplyTime(java.time.LocalDateTime.now());
+        reviewMapper.updateById(update);
     }
 
     /**

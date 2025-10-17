@@ -126,7 +126,7 @@ public class OrdersServiceImpl implements OrdersService {
             vo.setProductImage(product.getCoverImage());
         }
         vo.setStatusText(getStatusText(order.getStatus()));
-        // 已支付且未评价可以评价
+        // 已完成的订单可以评价（允许多次评价）
         vo.setCanReview(order.getStatus() == 2);
 
         return vo;
@@ -169,6 +169,7 @@ public class OrdersServiceImpl implements OrdersService {
             }
             
             vo.setStatusText(getStatusText(order.getStatus()));
+            // 已完成的订单可以评价（允许多次评价）
             vo.setCanReview(order.getStatus() == 2);
             
             return vo;

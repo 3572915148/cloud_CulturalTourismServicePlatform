@@ -9,16 +9,16 @@
           <h2>{{ userStore.userInfo.nickname || userStore.userInfo.username }}</h2>
           <p class="user-id">ID: {{ userStore.userInfo.id }}</p>
           <div class="user-stats">
-            <div class="stat-item">
-              <span class="stat-value">0</span>
+            <div class="stat-item" @click="activeTab = 'orders'">
+              <span class="stat-value">{{ statsData.orderCount }}</span>
               <span class="stat-label">订单</span>
             </div>
-            <div class="stat-item">
-              <span class="stat-value">0</span>
+            <div class="stat-item" @click="activeTab = 'favorites'">
+              <span class="stat-value">{{ statsData.favoriteCount }}</span>
               <span class="stat-label">收藏</span>
             </div>
-            <div class="stat-item">
-              <span class="stat-value">0</span>
+            <div class="stat-item" @click="activeTab = 'reviews'">
+              <span class="stat-value">{{ statsData.reviewCount }}</span>
               <span class="stat-label">评价</span>
             </div>
           </div>
@@ -195,6 +195,7 @@
                         v-if="order.status === 2 && order.canReview" 
                         type="primary" 
                         size="small"
+                        @click="handleReview(order)"
                       >
                         去评价
                       </el-button>
@@ -214,7 +215,7 @@
 
         <!-- 我的收藏 -->
         <el-tab-pane label="我的收藏" name="favorites">
-          <div class="tab-content">
+          <div class="tab-content" v-loading="favoritesLoading">
             <el-empty v-if="favoritesList.length === 0" description="暂无收藏" />
             <div v-else class="favorites-grid">
               <el-card 
@@ -224,19 +225,19 @@
                 shadow="hover"
               >
                 <img 
-                  :src="item.coverImage || '/placeholder.jpg'" 
-                  :alt="item.title"
+                  :src="item.productCoverImage || '/placeholder.jpg'" 
+                  :alt="item.productTitle"
                   class="favorite-image"
-                  @click="router.push(`/product/${item.id}`)"
+                  @click="router.push(`/product/${item.productId}`)"
                 >
                 <div class="favorite-info">
-                  <h4 @click="router.push(`/product/${item.id}`)">{{ item.title }}</h4>
-                  <p class="favorite-price">¥{{ item.price }}</p>
+                  <h4 @click="router.push(`/product/${item.productId}`)">{{ item.productTitle }}</h4>
+                  <p class="favorite-price">¥{{ item.productPrice }}</p>
                   <p class="favorite-time">收藏于 {{ formatTime(item.createTime) }}</p>
                   <el-button 
                     type="danger" 
                     size="small" 
-                    @click="handleRemoveFavorite(item.id)"
+                    @click="handleRemoveFavorite(item.productId)"
                   >
                     取消收藏
                   </el-button>
@@ -248,8 +249,73 @@
 
         <!-- 我的评价 -->
         <el-tab-pane label="我的评价" name="reviews">
-          <div class="tab-content">
-            <el-empty description="暂无评价" />
+          <div class="tab-content" v-loading="reviewsLoading">
+            <el-empty v-if="reviewsList.length === 0" description="暂无评价" />
+            
+            <div v-else class="reviews-container">
+              <el-card
+                v-for="review in reviewsList"
+                :key="review.id"
+                class="review-card"
+                shadow="hover"
+              >
+                <div class="review-header">
+                  <div class="product-info">
+                    <img 
+                      v-if="review.productCoverImage"
+                      :src="review.productCoverImage" 
+                      class="product-image"
+                      @click="router.push(`/product/${review.productId}`)"
+                    >
+                    <div class="product-detail">
+                      <h4 @click="router.push(`/product/${review.productId}`)">
+                        {{ review.productTitle }}
+                      </h4>
+                      <el-rate 
+                        :model-value="review.rating" 
+                        disabled 
+                        size="small"
+                        :colors="['#99A9BF', '#F7BA2A', '#FF9900']"
+                      />
+                    </div>
+                  </div>
+                  <div class="review-time">{{ formatTime(review.createTime) }}</div>
+                </div>
+                
+                <div class="review-content">{{ review.content }}</div>
+                
+                <div v-if="review.images" class="review-images">
+                  <el-image
+                    v-for="(img, index) in JSON.parse(review.images || '[]')"
+                    :key="index"
+                    :src="img"
+                    fit="cover"
+                    class="review-image-thumb"
+                    :preview-src-list="JSON.parse(review.images || '[]')"
+                    :initial-index="index"
+                    preview-teleported
+                  />
+                </div>
+                
+                <div v-if="review.replyContent" class="merchant-reply-box">
+                  <div class="reply-header">
+                    <span class="reply-label">商户回复</span>
+                    <span class="reply-time">{{ formatTime(review.replyTime) }}</span>
+                  </div>
+                  <div class="reply-content">{{ review.replyContent }}</div>
+                </div>
+                
+                <div class="review-actions">
+                  <el-button 
+                    type="danger" 
+                    size="small"
+                    @click="handleDeleteReview(review.id)"
+                  >
+                    删除评价
+                  </el-button>
+                </div>
+              </el-card>
+            </div>
           </div>
         </el-tab-pane>
 
@@ -395,6 +461,78 @@
       </el-tabs>
     </div>
   </div>
+
+  <!-- 评价对话框 -->
+  <el-dialog
+    v-model="reviewDialogVisible"
+    title="发表评价"
+    width="600px"
+    :close-on-click-modal="false"
+  >
+    <el-form :model="reviewForm" label-width="80px">
+      <el-form-item label="产品">
+        <div class="product-name">{{ reviewForm.productTitle }}</div>
+      </el-form-item>
+      
+      <el-form-item label="评分" required>
+        <el-rate 
+          v-model="reviewForm.rating" 
+          :colors="['#99A9BF', '#F7BA2A', '#FF9900']"
+          show-text
+          :texts="['极差', '失望', '一般', '满意', '惊喜']"
+        />
+      </el-form-item>
+      
+      <el-form-item label="评价内容" required>
+        <el-input
+          v-model="reviewForm.content"
+          type="textarea"
+          :rows="6"
+          placeholder="请分享您的使用体验..."
+          maxlength="500"
+          show-word-limit
+        />
+      </el-form-item>
+      
+      <el-form-item label="上传图片">
+        <div class="review-images-upload">
+          <el-upload
+            :auto-upload="false"
+            :on-change="handleReviewImageUpload"
+            :show-file-list="false"
+            accept="image/*"
+            multiple
+          >
+            <el-button size="small" type="primary">选择图片</el-button>
+          </el-upload>
+          
+          <div v-if="reviewForm.images.length > 0" class="uploaded-images">
+            <div 
+              v-for="(img, index) in reviewForm.images" 
+              :key="index"
+              class="image-item"
+            >
+              <el-image :src="img" fit="cover" class="preview-image" />
+              <el-icon class="remove-icon" @click="handleRemoveReviewImage(index)">
+                <Close />
+              </el-icon>
+            </div>
+          </div>
+        </div>
+      </el-form-item>
+    </el-form>
+    
+    <template #footer>
+      <el-button @click="reviewDialogVisible = false">取消</el-button>
+      <el-button 
+        type="primary" 
+        :loading="reviewSubmitting"
+        @click="handleSubmitReview"
+      >
+        提交评价
+      </el-button>
+    </template>
+  </el-dialog>
 </template>
 
 <script setup>
@@ -402,15 +540,25 @@ import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { Close } from '@element-plus/icons-vue'
 import { createFeedback, getMyFeedbacks } from '@/api/feedback'
 import { getMyOrders, cancelOrder, finishOrder } from '@/api/order'
 import { getCurrentUserInfo, updateUserInfo, changePassword, deleteAccount } from '@/api/user'
 import { uploadFile } from '@/api/file'
+import { getMyReviews, deleteReview, createReview } from '@/api/review'
+import { getMyFavorites, removeFavorite as removeFavoriteApi, getFavoriteCount } from '@/api/favorite'
 
 const router = useRouter()
 const userStore = useUserStore()
 
 const activeTab = ref('info')
+
+// 统计数据
+const statsData = reactive({
+  orderCount: 0,
+  favoriteCount: 0,
+  reviewCount: 0
+})
 
 const userForm = reactive({
   username: userStore.userInfo.username || '',
@@ -436,20 +584,46 @@ const orderList = ref([])
 const orderLoading = ref(false)
 const orderStatus = ref(null)
 
+// 评价列表
+const reviewsList = ref([])
+const reviewsLoading = ref(false)
+
+// 评价对话框
+const reviewDialogVisible = ref(false)
+const reviewForm = reactive({
+  orderId: null,
+  productId: null,
+  productTitle: '',
+  rating: 5,
+  content: '',
+  images: []
+})
+const reviewSubmitting = ref(false)
+
 const passwordForm = reactive({
   phone: '',
   newPassword: '',
   confirmPassword: ''
 })
 
-// 收藏列表（从localStorage获取）
-const favoritesList = computed(() => {
-  const favorites = localStorage.getItem('favorites')
-  if (!favorites) return []
-  const allFavorites = JSON.parse(favorites)
-  // 只返回当前用户的收藏
-  return allFavorites.filter(item => item.userId === userStore.userInfo.id)
-})
+// 收藏列表（从后端API获取）
+const favoritesList = ref([])
+const favoritesLoading = ref(false)
+
+// 获取收藏列表
+const fetchMyFavorites = async () => {
+  favoritesLoading.value = true
+  try {
+    const res = await getMyFavorites({ current: 1, size: 100 })
+    if (res.data && res.data.records) {
+      favoritesList.value = res.data.records
+    }
+  } catch (error) {
+    console.error('获取收藏列表失败：', error)
+  } finally {
+    favoritesLoading.value = false
+  }
+}
 
 // 头像上传前的验证
 const beforeAvatarUpload = (file) => {
@@ -694,6 +868,112 @@ const fetchMyOrders = async () => {
   }
 }
 
+// 获取我的评价列表
+const fetchMyReviews = async () => {
+  reviewsLoading.value = true
+  try {
+    const res = await getMyReviews({ current: 1, size: 100 })
+    if (res.data && res.data.records) {
+      reviewsList.value = res.data.records
+    }
+  } catch (error) {
+    console.error('获取评价列表失败：', error)
+  } finally {
+    reviewsLoading.value = false
+  }
+}
+
+// 删除评价
+const handleDeleteReview = (reviewId) => {
+  ElMessageBox.confirm('确定要删除这条评价吗？删除后无法恢复。', '提示', {
+    confirmButtonText: '确定',
+    cancelButtonText: '取消',
+    type: 'warning'
+  }).then(async () => {
+    try {
+      await deleteReview(reviewId)
+      ElMessage.success('评价已删除')
+      fetchMyReviews()
+      // 更新统计数据
+      fetchStats()
+    } catch (error) {
+      console.error('删除评价失败：', error)
+      ElMessage.error(error.response?.data?.message || '删除失败')
+    }
+  }).catch(() => {
+    // 用户取消
+  })
+}
+
+// 打开评价对话框
+const handleReview = (order) => {
+  reviewForm.orderId = order.id
+  reviewForm.productId = order.productId
+  reviewForm.productTitle = order.productTitle
+  reviewForm.rating = 5
+  reviewForm.content = ''
+  reviewForm.images = []
+  reviewDialogVisible.value = true
+}
+
+// 提交评价
+const handleSubmitReview = async () => {
+  if (!reviewForm.content.trim()) {
+    ElMessage.warning('请输入评价内容')
+    return
+  }
+  
+  reviewSubmitting.value = true
+  try {
+    const data = {
+      orderId: reviewForm.orderId,
+      productId: reviewForm.productId,
+      rating: reviewForm.rating,
+      content: reviewForm.content,
+      images: reviewForm.images.length > 0 ? JSON.stringify(reviewForm.images) : null
+    }
+    
+    await createReview(data)
+    ElMessage.success('评价成功')
+    reviewDialogVisible.value = false
+    
+    // 刷新订单列表和统计数据
+    fetchMyOrders()
+    fetchStats()
+  } catch (error) {
+    console.error('提交评价失败：', error)
+    ElMessage.error(error.response?.data?.message || '评价失败')
+  } finally {
+    reviewSubmitting.value = false
+  }
+}
+
+// 上传评价图片
+const handleReviewImageUpload = async (file) => {
+  // file.raw 是原始文件对象
+  if (!file.raw) {
+    ElMessage.error('文件无效')
+    return false
+  }
+  
+  try {
+    const res = await uploadFile(file.raw)
+    if (res.data) {
+      reviewForm.images.push(res.data)
+      ElMessage.success('图片上传成功')
+    }
+  } catch (error) {
+    console.error('图片上传失败：', error)
+    ElMessage.error(error.response?.data?.message || '图片上传失败')
+  }
+  return false // 阻止自动上传
+}
+
+// 删除评价图片
+const handleRemoveReviewImage = (index) => {
+  reviewForm.images.splice(index, 1)
+}
+
 // 获取订单状态颜色
 const getOrderStatusColor = (status) => {
   const colors = {
@@ -767,21 +1047,17 @@ const handleFinishOrder = (orderId) => {
 }
 
 // 取消收藏
-const handleRemoveFavorite = (productId) => {
-  const favorites = localStorage.getItem('favorites')
-  if (!favorites) return
-  
-  const allFavorites = JSON.parse(favorites)
-  const newFavorites = allFavorites.filter(item => 
-    !(item.id === productId && item.userId === userStore.userInfo.id)
-  )
-  
-  localStorage.setItem('favorites', JSON.stringify(newFavorites))
-  ElMessage.success('取消收藏成功')
-  
-  // 强制刷新收藏列表（通过修改localStorage触发computed更新）
-  // 这里我们需要触发一次更新，可以通过重新获取来实现
-  window.dispatchEvent(new Event('storage'))
+const handleRemoveFavorite = async (productId) => {
+  try {
+    await removeFavoriteApi(productId)
+    ElMessage.success('取消收藏成功')
+    // 刷新收藏列表和统计数据
+    fetchMyFavorites()
+    fetchStats()
+  } catch (error) {
+    console.error('取消收藏失败：', error)
+    ElMessage.error(error.response?.data?.message || '取消收藏失败')
+  }
 }
 
 // 监听activeTab变化，加载对应数据
@@ -790,6 +1066,10 @@ watch(activeTab, (newVal) => {
     fetchMyOrders()
   } else if (newVal === 'feedback') {
     fetchMyFeedbacks()
+  } else if (newVal === 'reviews') {
+    fetchMyReviews()
+  } else if (newVal === 'favorites') {
+    fetchMyFavorites()
   }
 })
 
@@ -829,9 +1109,31 @@ const fetchUserInfo = async () => {
   }
 }
 
+// 获取统计数据
+const fetchStats = async () => {
+  try {
+    // 获取订单数量
+    const orderRes = await getMyOrders({ current: 1, size: 1 })
+    statsData.orderCount = orderRes.data?.total || 0
+    
+    // 获取收藏数量（从API）
+    const favoriteCountRes = await getFavoriteCount()
+    statsData.favoriteCount = favoriteCountRes.data || 0
+
+    // 获取评价数量
+    const reviewRes = await getMyReviews({ current: 1, size: 1 })
+    statsData.reviewCount = reviewRes.data?.total || 0
+  } catch (error) {
+    console.error('获取统计数据失败：', error)
+  }
+}
+
 onMounted(() => {
   // 获取用户信息
   fetchUserInfo()
+  
+  // 获取统计数据
+  fetchStats()
   
   if (activeTab.value === 'feedback') {
     fetchMyFeedbacks()
@@ -895,13 +1197,35 @@ onMounted(() => {
 }
 
 .user-info-card {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: linear-gradient(135deg, #5B8DB8 0%, #7BA7CC 50%, #A8C5DD 100%);
   border-radius: 12px;
   padding: 40px;
   display: flex;
   align-items: center;
   gap: 32px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  box-shadow: 0 8px 24px rgba(91, 141, 184, 0.25);
+  position: relative;
+  overflow: hidden;
+}
+
+.user-info-card::before {
+  content: '';
+  position: absolute;
+  top: -50%;
+  right: -50%;
+  width: 200%;
+  height: 200%;
+  background: radial-gradient(circle, rgba(255,255,255,0.15) 0%, transparent 70%);
+  animation: rotate 30s linear infinite;
+}
+
+@keyframes rotate {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .user-info-card :deep(.el-avatar) {
@@ -909,10 +1233,15 @@ onMounted(() => {
   color: #fff;
   font-size: 32px;
   font-weight: 600;
+  border: 3px solid rgba(255, 255, 255, 0.5);
+  z-index: 1;
+  position: relative;
 }
 
 .user-details {
   color: #fff;
+  z-index: 1;
+  position: relative;
 }
 
 .user-details h2 {
@@ -936,6 +1265,15 @@ onMounted(() => {
   flex-direction: column;
   align-items: center;
   gap: 4px;
+  cursor: pointer;
+  padding: 8px 16px;
+  border-radius: 8px;
+  transition: all 0.3s ease;
+}
+
+.stat-item:hover {
+  background: rgba(255, 255, 255, 0.2);
+  transform: translateY(-2px);
 }
 
 .stat-value {
@@ -1190,6 +1528,172 @@ onMounted(() => {
   font-size: 13px;
   color: #999;
   margin-bottom: 12px;
+}
+
+/* 评价列表样式 */
+.reviews-container {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.review-card {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+.review-card .review-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.review-card .product-info {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.review-card .product-image {
+  width: 60px;
+  height: 60px;
+  object-fit: cover;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.review-card .product-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.review-card .product-detail h4 {
+  font-size: 15px;
+  font-weight: 600;
+  color: #333;
+  margin: 0;
+  cursor: pointer;
+}
+
+.review-card .product-detail h4:hover {
+  color: #409EFF;
+}
+
+.review-card .review-time {
+  font-size: 14px;
+  color: #999;
+}
+
+.review-card .review-content {
+  font-size: 15px;
+  line-height: 1.6;
+  color: #666;
+  margin-bottom: 12px;
+}
+
+.review-card .review-images {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.review-card .review-image-thumb {
+  width: 80px;
+  height: 80px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.review-card .merchant-reply-box {
+  background: #f7f8fa;
+  padding: 12px;
+  border-radius: 8px;
+  margin-bottom: 12px;
+}
+
+.review-card .reply-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.review-card .reply-label {
+  font-size: 14px;
+  font-weight: 500;
+  color: #409EFF;
+}
+
+.review-card .reply-time {
+  font-size: 12px;
+  color: #999;
+}
+
+.review-card .reply-content {
+  font-size: 14px;
+  line-height: 1.6;
+  color: #666;
+}
+
+.review-card .review-actions {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 12px;
+  border-top: 1px solid #f0f0f0;
+}
+
+/* 评价对话框样式 */
+.product-name {
+  font-size: 15px;
+  font-weight: 500;
+  color: #333;
+}
+
+.review-images-upload {
+  width: 100%;
+}
+
+.uploaded-images {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+
+.uploaded-images .image-item {
+  position: relative;
+  width: 80px;
+  height: 80px;
+}
+
+.uploaded-images .preview-image {
+  width: 100%;
+  height: 100%;
+  border-radius: 8px;
+}
+
+.uploaded-images .remove-icon {
+  position: absolute;
+  top: -8px;
+  right: -8px;
+  background: #f56c6c;
+  color: white;
+  border-radius: 50%;
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.uploaded-images .remove-icon:hover {
+  background: #f78989;
 }
 </style>
 

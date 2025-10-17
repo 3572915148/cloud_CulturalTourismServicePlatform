@@ -50,3 +50,52 @@ export function updateMerchantInfo(data) {
   })
 }
 
+// ====== 商户产品相关 ======
+export function listMyProducts(params) {
+  return request({
+    url: '/merchant/products',
+    method: 'get',
+    params
+  })
+}
+
+export function createMyProduct(data) {
+  return request({
+    url: '/merchant/product',
+    method: 'post',
+    data
+  })
+}
+
+export function updateMyProduct(id, data) {
+  return request({
+    url: `/merchant/product/${id}`,
+    method: 'put',
+    data
+  })
+}
+
+export function deleteMyProduct(id) {
+  return request({
+    url: `/merchant/product/${id}`,
+    method: 'delete'
+  })
+}
+
+// ====== 商户评价相关 ======
+export function listMyReviews(params) {
+  return request({
+    url: '/merchant/reviews',
+    method: 'get',
+    params
+  })
+}
+
+export function replyReview(id, content) {
+  return request({
+    url: `/merchant/review/${id}/reply`,
+    method: 'post',
+    params: { content }
+  })
+}
+

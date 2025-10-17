@@ -11,10 +11,19 @@ const request = axios.create({
 // 请求拦截器
 request.interceptors.request.use(
   config => {
-    // 从localStorage获取token
-    const token = localStorage.getItem('token')
-    if (token) {
-      config.headers['Authorization'] = `Bearer ${token}`
+    // 根据请求路径为不同端附带对应的 Token
+    const url = typeof config.url === 'string' ? config.url : ''
+    const isMerchantApi = url.startsWith('/merchant') || url.includes('/merchant/') || url.includes('/api/merchant/')
+    if (isMerchantApi) {
+      const merchantToken = localStorage.getItem('merchantToken')
+      if (merchantToken) {
+        config.headers['Authorization'] = `Bearer ${merchantToken}`
+      }
+    } else {
+      const token = localStorage.getItem('token')
+      if (token) {
+        config.headers['Authorization'] = `Bearer ${token}`
+      }
     }
     return config
   },
@@ -37,9 +46,16 @@ request.interceptors.response.use(
       
       if (needLogin) {
         ElMessage.error(res.message || '请重新登录')
-        localStorage.removeItem('token')
-        localStorage.removeItem('userInfo')
-        router.push('/login')
+        const isMerchantApi = response.config?.url?.startsWith('/merchant')
+        if (isMerchantApi) {
+          localStorage.removeItem('merchantToken')
+          localStorage.removeItem('merchantInfo')
+          router.push('/merchant/login')
+        } else {
+          localStorage.removeItem('token')
+          localStorage.removeItem('userInfo')
+          router.push('/login')
+        }
       } else {
         ElMessage.error(res.message || '请求失败')
       }
@@ -82,9 +98,16 @@ request.interceptors.response.use(
     }
     
     if (needLogin) {
-      localStorage.removeItem('token')
-      localStorage.removeItem('userInfo')
-      router.push('/login')
+      const isMerchantApi = error.config?.url?.startsWith('/merchant')
+      if (isMerchantApi) {
+        localStorage.removeItem('merchantToken')
+        localStorage.removeItem('merchantInfo')
+        router.push('/merchant/login')
+      } else {
+        localStorage.removeItem('token')
+        localStorage.removeItem('userInfo')
+        router.push('/login')
+      }
     }
     
     ElMessage.error(message)

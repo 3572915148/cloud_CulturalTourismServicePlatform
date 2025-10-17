@@ -135,11 +135,69 @@
                     disabled
                     :colors="['#99A9BF', '#F7BA2A', '#FF9900']"
                   />
+                  <span class="review-count">共 {{ reviewsTotal }} 条评价</span>
                 </div>
               </div>
               
-              <div class="reviews-list">
-                <el-empty description="暂无评价" />
+              <div class="reviews-list" v-loading="reviewsLoading">
+                <el-empty v-if="reviews.length === 0" description="暂无评价" />
+                
+                <div v-else>
+                  <div 
+                    v-for="review in reviews" 
+                    :key="review.id"
+                    class="review-item"
+                  >
+                    <div class="review-header">
+                      <div class="user-info">
+                        <el-avatar :size="40">
+                          {{ review.userNickname ? review.userNickname.charAt(0) : '用' }}
+                        </el-avatar>
+                        <div class="user-detail">
+                          <div class="user-name">{{ review.userNickname || '匿名用户' }}</div>
+                          <el-rate 
+                            :model-value="review.rating" 
+                            disabled 
+                            size="small"
+                            :colors="['#99A9BF', '#F7BA2A', '#FF9900']"
+                          />
+                        </div>
+                      </div>
+                      <div class="review-date">{{ formatReviewTime(review.createTime) }}</div>
+                    </div>
+                    
+                    <div class="review-content">{{ review.content }}</div>
+                    
+                    <div v-if="review.images" class="review-images">
+                      <el-image
+                        v-for="(img, index) in JSON.parse(review.images || '[]')"
+                        :key="index"
+                        :src="img"
+                        fit="cover"
+                        class="review-image"
+                        :preview-src-list="JSON.parse(review.images || '[]')"
+                        :initial-index="index"
+                        preview-teleported
+                      />
+                    </div>
+                    
+                    <div v-if="review.replyContent" class="merchant-reply">
+                      <div class="reply-label">商户回复：</div>
+                      <div class="reply-content">{{ review.replyContent }}</div>
+                      <div class="reply-time">{{ formatReviewTime(review.replyTime) }}</div>
+                    </div>
+                  </div>
+                  
+                  <el-pagination
+                    v-if="reviewsTotal > reviewsPageSize"
+                    class="review-pagination"
+                    :current-page="reviewsPage"
+                    :page-size="reviewsPageSize"
+                    :total="reviewsTotal"
+                    layout="prev, pager, next"
+                    @current-change="handleReviewPageChange"
+                  />
+                </div>
               </div>
             </div>
           </el-tab-pane>
@@ -186,6 +244,8 @@ import { useRouter, useRoute } from 'vue-router'
 import { useUserStore } from '@/stores/user'
 import { getProductById } from '@/api/product'
 import { createOrder, payOrder } from '@/api/order'
+import { getProductReviews } from '@/api/review'
+import { addFavorite, removeFavorite, checkFavorite, toggleFavorite } from '@/api/favorite'
 import { ElMessage } from 'element-plus'
 import { ArrowLeft, ShoppingCart, Star } from '@element-plus/icons-vue'
 
@@ -200,6 +260,13 @@ const currentImage = ref('')
 const activeTab = ref('detail')
 const orderDialogVisible = ref(false)
 const isFavorite = ref(false)
+
+// 评价相关
+const reviews = ref([])
+const reviewsLoading = ref(false)
+const reviewsTotal = ref(0)
+const reviewsPage = ref(1)
+const reviewsPageSize = ref(10)
 
 // 图片列表
 const imageList = computed(() => {
@@ -244,6 +311,40 @@ const fetchProductDetail = async () => {
   } finally {
     loading.value = false
   }
+}
+
+// 获取评价列表
+const fetchReviews = async () => {
+  if (!route.params.id) return
+  
+  reviewsLoading.value = true
+  try {
+    const res = await getProductReviews(route.params.id, {
+      current: reviewsPage.value,
+      size: reviewsPageSize.value
+    })
+    if (res.data) {
+      reviews.value = res.data.records || []
+      reviewsTotal.value = res.data.total || 0
+    }
+  } catch (error) {
+    console.error('获取评价列表失败：', error)
+  } finally {
+    reviewsLoading.value = false
+  }
+}
+
+// 评价分页改变
+const handleReviewPageChange = (page) => {
+  reviewsPage.value = page
+  fetchReviews()
+}
+
+// 格式化时间
+const formatReviewTime = (time) => {
+  if (!time) return ''
+  const date = new Date(time)
+  return date.toLocaleDateString('zh-CN')
 }
 
 // 立即购买
@@ -292,66 +393,76 @@ const confirmOrder = async () => {
   }
 }
 
-// 获取收藏列表（从localStorage）
-const getFavorites = () => {
-  const favorites = localStorage.getItem('favorites')
-  return favorites ? JSON.parse(favorites) : []
+// 检查是否已收藏（从API）
+const checkIsFavoriteStatus = async () => {
+  if (!userStore.isLoggedIn || !product.value.id) {
+    isFavorite.value = false
+    return
+  }
+  
+  try {
+    const res = await checkFavorite(product.value.id)
+    isFavorite.value = res.data || false
+  } catch (error) {
+    console.error('检查收藏状态失败：', error)
+    isFavorite.value = false
+  }
 }
 
-// 保存收藏列表（到localStorage）
-const saveFavorites = (favorites) => {
-  localStorage.setItem('favorites', JSON.stringify(favorites))
-}
-
-// 检查是否已收藏
-const checkIsFavorite = () => {
-  if (!userStore.isLoggedIn || !product.value.id) return false
-  const favorites = getFavorites()
-  return favorites.some(item => item.id === product.value.id && item.userId === userStore.userInfo.id)
-}
-
-// 收藏/取消收藏
-const handleCollect = () => {
+// 收藏/取消收藏（使用智能切换API）
+const handleCollect = async () => {
   if (!userStore.isLoggedIn) {
     ElMessage.warning('请先登录')
     router.push('/login')
     return
   }
   
-  const favorites = getFavorites()
-  const index = favorites.findIndex(item => 
-    item.id === product.value.id && item.userId === userStore.userInfo.id
-  )
-  
-  if (index > -1) {
-    // 已收藏，取消收藏
-    favorites.splice(index, 1)
-    isFavorite.value = false
-    ElMessage.success('取消收藏成功')
-  } else {
-    // 未收藏，添加收藏
-    favorites.push({
-      id: product.value.id,
-      userId: userStore.userInfo.id,
-      title: product.value.title,
-      price: product.value.price,
-      coverImage: product.value.coverImage,
-      createTime: new Date().toISOString()
-    })
-    isFavorite.value = true
-    ElMessage.success('收藏成功')
+  try {
+    // 使用智能切换API，后端会自动判断当前状态并切换
+    const res = await toggleFavorite(product.value.id)
+    isFavorite.value = res.data
+    
+    if (res.data) {
+      ElMessage.success('收藏成功')
+    } else {
+      ElMessage.success('取消收藏成功')
+    }
+  } catch (error) {
+    console.error('收藏操作失败：', error)
+    ElMessage.error(error.response?.data?.message || '操作失败')
   }
-  
-  saveFavorites(favorites)
 }
 
 onMounted(() => {
   fetchProductDetail()
+  fetchReviews()
+  // 页面加载时检查收藏状态
+  if (userStore.isLoggedIn) {
+    checkIsFavoriteStatus()
+  }
 })
 
 // 监听产品变化，更新收藏状态
-watch(() => product.value.id, () => {
-  isFavorite.value = checkIsFavorite()
+watch(() => product.value.id, (newId) => {
+  if (newId && userStore.isLoggedIn) {
+    checkIsFavoriteStatus()
+  }
+})
+
+// 监听登录状态变化
+watch(() => userStore.isLoggedIn, (isLoggedIn) => {
+  if (isLoggedIn && product.value.id) {
+    checkIsFavoriteStatus()
+  } else {
+    isFavorite.value = false
+  }
+})
+
+// 监听切换到评价标签时刷新评价列表
+watch(() => activeTab.value, (newTab) => {
+  if (newTab === 'reviews') {
+    fetchReviews()
+  }
 })
 </script>
 
@@ -560,6 +671,104 @@ watch(() => product.value.id, () => {
   font-size: 48px;
   font-weight: 600;
   color: #f56c6c;
+}
+
+.review-count {
+  margin-left: 16px;
+  font-size: 14px;
+  color: #666;
+}
+
+.review-item {
+  padding: 24px;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.review-item:last-child {
+  border-bottom: none;
+}
+
+.review-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.user-info {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.user-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.user-name {
+  font-size: 15px;
+  font-weight: 500;
+  color: #333;
+}
+
+.review-date {
+  font-size: 14px;
+  color: #999;
+}
+
+.review-content {
+  font-size: 15px;
+  line-height: 1.6;
+  color: #666;
+  margin-bottom: 12px;
+}
+
+.review-images {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.review-image {
+  width: 100px;
+  height: 100px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.merchant-reply {
+  background: #f7f8fa;
+  padding: 16px;
+  border-radius: 8px;
+  margin-top: 12px;
+}
+
+.reply-label {
+  font-size: 14px;
+  font-weight: 500;
+  color: #409EFF;
+  margin-bottom: 8px;
+}
+
+.reply-content {
+  font-size: 14px;
+  line-height: 1.6;
+  color: #666;
+  margin-bottom: 4px;
+}
+
+.reply-time {
+  font-size: 12px;
+  color: #999;
+}
+
+.review-pagination {
+  margin-top: 32px;
+  display: flex;
+  justify-content: center;
 }
 
 .order-confirm {

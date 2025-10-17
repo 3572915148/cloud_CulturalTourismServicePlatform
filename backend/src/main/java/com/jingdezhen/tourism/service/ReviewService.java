@@ -45,5 +45,24 @@ public interface ReviewService {
      * @param userId 用户ID
      */
     void deleteReview(Long reviewId, Long userId);
+
+    /**
+     * 获取商户下产品的评价列表
+     *
+     * @param merchantId 商户ID
+     * @param current 当前页
+     * @param size 每页大小
+     * @return 评价分页列表
+     */
+    Page<ReviewVO> getMerchantReviews(Long merchantId, Long current, Long size);
+
+    /**
+     * 商户回复评价
+     *
+     * @param reviewId 评价ID
+     * @param merchantId 商户ID（鉴权）
+     * @param replyContent 回复内容
+     */
+    void replyReview(Long reviewId, Long merchantId, String replyContent);
 }
 

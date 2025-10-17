@@ -46,5 +46,20 @@ public interface MerchantService extends IService<Merchant> {
      * @return 更新后的商户信息
      */
     MerchantVO updateMerchantInfo(Long merchantId, MerchantUpdateDTO updateDTO);
+
+    /**
+     * 审核通过
+     */
+    void approve(Long merchantId, String remark);
+
+    /**
+     * 审核拒绝
+     */
+    void reject(Long merchantId, String remark);
+
+    /**
+     * 启用/禁用账户
+     */
+    void changeStatus(Long merchantId, Integer status);
 }
 

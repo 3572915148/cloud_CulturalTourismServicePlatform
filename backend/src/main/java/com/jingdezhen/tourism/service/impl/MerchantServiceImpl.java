@@ -151,6 +151,32 @@ public class MerchantServiceImpl extends ServiceImpl<MerchantMapper, Merchant>
         return convertToVO(merchant);
     }
 
+    @Override
+    public void approve(Long merchantId, String remark) {
+        Merchant merchant = this.getById(merchantId);
+        if (merchant == null) throw new BusinessException("商户不存在");
+        merchant.setAuditStatus(1);
+        merchant.setAuditRemark(remark);
+        this.updateById(merchant);
+    }
+
+    @Override
+    public void reject(Long merchantId, String remark) {
+        Merchant merchant = this.getById(merchantId);
+        if (merchant == null) throw new BusinessException("商户不存在");
+        merchant.setAuditStatus(2);
+        merchant.setAuditRemark(remark);
+        this.updateById(merchant);
+    }
+
+    @Override
+    public void changeStatus(Long merchantId, Integer status) {
+        Merchant merchant = this.getById(merchantId);
+        if (merchant == null) throw new BusinessException("商户不存在");
+        merchant.setStatus(status);
+        this.updateById(merchant);
+    }
+
     /**
      * 将Merchant实体转换为MerchantVO
      */

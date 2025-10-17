@@ -108,22 +108,15 @@
           <span>其他登录方式</span>
         </div>
 
-        <div class="social-login">
-          <el-tooltip content="微信登录" placement="bottom">
-            <el-button circle class="social-btn wechat">
-              <el-icon><ChatDotRound /></el-icon>
-            </el-button>
-          </el-tooltip>
-          <el-tooltip content="QQ登录" placement="bottom">
-            <el-button circle class="social-btn qq">
-              <el-icon><MessageBox /></el-icon>
-            </el-button>
-          </el-tooltip>
-          <el-tooltip content="手机登录" placement="bottom">
-            <el-button circle class="social-btn phone">
-              <el-icon><Iphone /></el-icon>
-            </el-button>
-          </el-tooltip>
+        <div class="role-login">
+          <el-button size="large" class="role-btn merchant" plain type="primary" @click="router.push('/merchant/login')">
+            <el-icon><Shop /></el-icon>
+            <span>商户登录</span>
+          </el-button>
+          <el-button size="large" class="role-btn admin" plain type="success" @click="router.push('/admin/login')">
+            <el-icon><Setting /></el-icon>
+            <span>管理员登录</span>
+          </el-button>
         </div>
       </div>
     </div>
@@ -563,6 +556,29 @@ const handleLogin = async () => {
   margin-top: 24px;
   font-size: 14px;
   color: #666;
+}
+
+.role-login {
+  margin-top: 12px;
+  display: flex;
+  justify-content: center;
+  gap: 16px;
+}
+
+.role-btn {
+  min-width: 140px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 10px;
+}
+
+.role-btn.merchant {
+  --el-color-primary: #4a90e2;
+}
+
+.role-btn.admin {
+  --el-color-success: #67c23a;
 }
 
 .divider {
