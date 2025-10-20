@@ -25,19 +25,16 @@ spring:
 #      database: 0
 #      timeout: 3000ms
   
-  # AI配置 - DeepSeek（暂时注释，等需要时再启用）
+  # AI配置 - DeepSeek
   # 使用方法：
-  # 1. 取消下面的注释
-  # 2. 将 your-deepseek-api-key 替换为您的DeepSeek API Key
-  # 3. 在pom.xml中取消spring-ai-openai-spring-boot-starter的注释
-#  ai:
-#    openai:
-#      api-key: ${DEEPSEEK_API_KEY:your-deepseek-api-key}
-#      base-url: https://api.deepseek.com
-#      chat:
-#        options:
-#          model: deepseek-chat
-#          temperature: 0.7
+  # 1. 将 your-deepseek-api-key 替换为您的DeepSeek API Key
+  # 2. 设置环境变量 DEEPSEEK_API_KEY 或直接修改下面的值
+  ai:
+    deepseek:
+      api-key: ${DEEPSEEK_API_KEY:sk-283b9c5e6ba942f1be5e569bf1a5358e}
+      base-url: https://api.deepseek.com
+      model: deepseek-chat
+      temperature: 0.7
 
 # MyBatis Plus配置
 mybatis-plus:
