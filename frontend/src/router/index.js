@@ -31,6 +31,12 @@ const routes = [
         meta: { title: '陶瓷文化' }
       },
       {
+        path: '/ai-chat',
+        name: 'AiChat',
+        component: () => import('@/views/AiChat.vue'),
+        meta: { title: 'AI文旅助手', requireAuth: true }
+      },
+      {
         path: '/user',
         name: 'User',
         component: () => import('@/views/User.vue'),

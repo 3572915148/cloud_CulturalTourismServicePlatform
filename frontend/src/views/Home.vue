@@ -38,6 +38,25 @@
         </div>
       </div>
 
+      <!-- AI助手入口 -->
+      <div class="section" v-if="userStore.isLoggedIn">
+        <h2 class="section-title">AI智能推荐</h2>
+        <div class="ai-assistant-card">
+          <div class="ai-card-content">
+            <div class="ai-icon">
+              <el-icon size="48" color="#409eff"><ChatDotRound /></el-icon>
+            </div>
+            <div class="ai-info">
+              <h3>景德镇AI文旅助手</h3>
+              <p>告诉我您的需求，我会为您推荐最合适的文旅产品</p>
+              <el-button type="primary" @click="router.push('/ai-chat')">
+                开始对话
+              </el-button>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- 推荐产品 -->
       <div class="section">
         <div class="section-header">
@@ -141,11 +160,13 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
+import { useUserStore } from '@/stores/user'
 import { getProductList } from '@/api/product'
 import { ElMessage } from 'element-plus'
-import { Shop, Check } from '@element-plus/icons-vue'
+import { Shop, Check, ChatDotRound } from '@element-plus/icons-vue'
 
 const router = useRouter()
+const userStore = useUserStore()
 const loading = ref(false)
 const recommendProducts = ref([])
 
@@ -401,6 +422,38 @@ onMounted(() => {
   font-size: 14px;
   color: #999;
   text-decoration: line-through;
+}
+
+/* AI助手卡片样式 */
+.ai-assistant-card {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  border-radius: 16px;
+  padding: 32px;
+  color: white;
+  margin-bottom: 32px;
+  box-shadow: 0 8px 32px rgba(102, 126, 234, 0.3);
+}
+
+.ai-card-content {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+}
+
+.ai-icon {
+  flex-shrink: 0;
+}
+
+.ai-info h3 {
+  margin: 0 0 8px 0;
+  font-size: 24px;
+  font-weight: 600;
+}
+
+.ai-info p {
+  margin: 0 0 16px 0;
+  font-size: 16px;
+  opacity: 0.9;
 }
 
 .features {

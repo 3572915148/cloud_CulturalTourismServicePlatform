@@ -17,6 +17,10 @@
           <el-menu-item index="/home">首页</el-menu-item>
           <el-menu-item index="/products">文旅产品</el-menu-item>
           <el-menu-item index="/ceramic">陶瓷文化</el-menu-item>
+          <el-menu-item index="/ai-chat" v-if="userStore.isLoggedIn">
+            <el-icon><ChatDotRound /></el-icon>
+            AI助手
+          </el-menu-item>
         </el-menu>
         
         <div class="user-actions">
@@ -97,7 +101,7 @@ import { ref, computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useUserStore } from '@/stores/user'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Shop } from '@element-plus/icons-vue'
+import { Shop, ChatDotRound } from '@element-plus/icons-vue'
 
 const router = useRouter()
 const route = useRoute()
