@@ -201,8 +201,10 @@ import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { ChatDotRound, User, Check, Close, Plus } from '@element-plus/icons-vue'
 import { getAiRecommendation, getRecommendationHistory, submitFeedback as submitFeedbackApi } from '@/api/ai'
+import { useUserStore } from '@/stores/user'
 
 const router = useRouter()
+const userStore = useUserStore()
 
 // 响应式数据
 const inputMessage = ref('')
@@ -213,6 +215,16 @@ const messagesContainer = ref(null)
 
 const messages = ref([])
 const historyList = ref([])
+
+// 检查登录状态
+const checkLoginStatus = () => {
+  if (!userStore.isLoggedIn) {
+    ElMessage.warning('请先登录后再使用AI推荐功能')
+    router.push('/login')
+    return false
+  }
+  return true
+}
 
 // 快速问题
 const quickQuestions = ref([
@@ -226,6 +238,9 @@ const quickQuestions = ref([
 // 发送消息
 const sendMessage = async () => {
   if (!inputMessage.value.trim() || loading.value) return
+  
+  // 检查登录状态
+  if (!checkLoginStatus()) return
 
   const userMessage = {
     id: Date.now(),
@@ -564,8 +579,16 @@ const startNewChat = () => {
   ElMessage.success('已开始新会话')
 }
 
-// 组件挂载时加载历史记录
+// 组件挂载时检查登录状态并加载历史记录
 onMounted(() => {
+  // 检查登录状态
+  if (!userStore.isLoggedIn) {
+    ElMessage.warning('请先登录后再使用AI推荐功能')
+    router.push('/login')
+    return
+  }
+  
+  // 加载历史记录
   loadHistory()
 })
 </script>

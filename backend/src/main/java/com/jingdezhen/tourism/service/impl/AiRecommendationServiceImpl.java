@@ -168,22 +168,59 @@ public class AiRecommendationServiceImpl implements AiRecommendationService {
         
         // 根据查询内容进行模糊匹配
         if (StringUtils.hasText(request.getQuery())) {
+            String query = request.getQuery().trim();
             wrapper.and(w -> w
-                .like(Product::getTitle, request.getQuery())
+                .like(Product::getTitle, query)
                 .or()
-                .like(Product::getDescription, request.getQuery())
+                .like(Product::getDescription, query)
                 .or()
-                .like(Product::getTags, request.getQuery())
+                .like(Product::getTags, query)
                 .or()
-                .like(Product::getRegion, request.getQuery())
+                .like(Product::getRegion, query)
+                .or()
+                .like(Product::getFeatures, query)
             );
+        } else {
+            // 如果没有查询条件，返回推荐产品
+            wrapper.eq(Product::getRecommend, 1);
         }
         
         // 限制返回数量，避免上下文过长
-        wrapper.last("LIMIT 20");
-        wrapper.orderByDesc(Product::getRecommend, Product::getRating);
+        wrapper.last("LIMIT 30"); // 增加数量以提供更多选择
+        wrapper.orderByDesc(Product::getRecommend, Product::getRating, Product::getSales);
         
-        return productMapper.selectList(wrapper);
+        List<Product> products = productMapper.selectList(wrapper);
+        log.info("查询到 {} 个匹配的产品", products.size());
+        
+        // 如果匹配的产品太少，补充一些推荐产品
+        if (products.size() < 10 && StringUtils.hasText(request.getQuery())) {
+            List<Long> existingIds = products.stream().map(Product::getId).collect(Collectors.toList());
+            if (!existingIds.isEmpty()) {
+                LambdaQueryWrapper<Product> fallbackWrapper = new LambdaQueryWrapper<>();
+                fallbackWrapper.eq(Product::getStatus, 1)
+                              .eq(Product::getRecommend, 1)
+                              .notIn(Product::getId, existingIds)
+                              .last("LIMIT " + (20 - products.size()));
+                fallbackWrapper.orderByDesc(Product::getRating, Product::getSales);
+                
+                List<Product> fallbackProducts = productMapper.selectList(fallbackWrapper);
+                products.addAll(fallbackProducts);
+                log.info("补充了 {} 个推荐产品，总计 {} 个产品", fallbackProducts.size(), products.size());
+            } else {
+                // 如果没有现有产品，直接查询推荐产品
+                LambdaQueryWrapper<Product> fallbackWrapper = new LambdaQueryWrapper<>();
+                fallbackWrapper.eq(Product::getStatus, 1)
+                              .eq(Product::getRecommend, 1)
+                              .last("LIMIT 20");
+                fallbackWrapper.orderByDesc(Product::getRating, Product::getSales);
+                
+                List<Product> fallbackProducts = productMapper.selectList(fallbackWrapper);
+                products.addAll(fallbackProducts);
+                log.info("补充了 {} 个推荐产品，总计 {} 个产品", fallbackProducts.size(), products.size());
+            }
+        }
+        
+        return products;
     }
 
     /**
@@ -230,9 +267,14 @@ public class AiRecommendationServiceImpl implements AiRecommendationService {
             可用产品信息：
             %s
             
+            重要约束：
+            - 你只能推荐上述产品列表中的产品
+            - 绝对不能推荐列表之外的产品
+            - 推荐的产品ID必须存在于上述列表中
+            
             请按照以下格式回复：
             1. 首先给出你的推荐理由和建议
-            2. 然后推荐3-5个最合适的产品，格式如下：
+            2. 然后推荐几个最合适的产品，格式如下：
             推荐产品：[产品ID1, 产品ID2, 产品ID3, ...]
             
             要求：
@@ -240,6 +282,7 @@ public class AiRecommendationServiceImpl implements AiRecommendationService {
             - 考虑价格、位置、评分等因素
             - 给出推荐理由
             - 回复要友好、专业
+            - 只能推荐上述列表中的产品，不能推荐其他产品
             """, query, context);
     }
 
@@ -291,6 +334,14 @@ public class AiRecommendationServiceImpl implements AiRecommendationService {
     private List<Long> parseRecommendedProducts(String aiResponse, List<Product> availableProducts) {
         List<Long> recommendedIds = new ArrayList<>();
         
+        // 创建可用产品ID集合，用于快速验证
+        Set<Long> availableProductIds = availableProducts.stream()
+            .map(Product::getId)
+            .collect(Collectors.toSet());
+        
+        log.info("可用产品ID列表: {}", availableProductIds);
+        log.info("AI响应内容: {}", aiResponse);
+        
         try {
             // 查找"推荐产品："后面的内容
             String pattern = "推荐产品：\\[([^\\]]+)\\]";
@@ -303,14 +354,21 @@ public class AiRecommendationServiceImpl implements AiRecommendationService {
                 for (String idStr : idStrings) {
                     try {
                         Long id = Long.parseLong(idStr.trim());
-                        // 验证产品ID是否在可用产品列表中
-                        if (availableProducts.stream().anyMatch(product -> product.getId().equals(id))) {
+                        // 严格验证产品ID是否在可用产品列表中
+                        if (availableProductIds.contains(id)) {
                             recommendedIds.add(id);
+                            log.info("成功解析并验证产品ID: {}", id);
+                        } else {
+                            log.warn("AI推荐的产品ID {} 不在可用产品列表中，已忽略", id);
                         }
                     } catch (NumberFormatException e) {
-                        log.warn("解析产品ID失败: {}", idStr);
+                        log.warn("解析产品ID失败，无效格式: {}", idStr);
                     }
                 }
+            } else {
+                log.warn("AI响应中未找到推荐产品格式，尝试其他解析方式");
+                // 尝试其他可能的格式
+                parseAlternativeFormats(aiResponse, availableProductIds, recommendedIds);
             }
         } catch (Exception e) {
             log.error("解析推荐产品ID失败", e);
@@ -318,13 +376,37 @@ public class AiRecommendationServiceImpl implements AiRecommendationService {
         
         // 如果没有解析到推荐产品，返回前3个匹配的产品
         if (recommendedIds.isEmpty() && !availableProducts.isEmpty()) {
+            log.info("AI解析失败，使用默认推荐策略");
             recommendedIds = availableProducts.stream()
                 .limit(3)
                 .map(Product::getId)
                 .collect(Collectors.toList());
         }
         
+        log.info("最终推荐的产品ID列表: {}", recommendedIds);
         return recommendedIds;
+    }
+    
+    /**
+     * 尝试其他格式解析
+     */
+    private void parseAlternativeFormats(String aiResponse, Set<Long> availableProductIds, List<Long> recommendedIds) {
+        // 尝试查找数字ID模式
+        java.util.regex.Pattern numberPattern = java.util.regex.Pattern.compile("\\b(\\d+)\\b");
+        java.util.regex.Matcher numberMatcher = numberPattern.matcher(aiResponse);
+        
+        while (numberMatcher.find()) {
+            try {
+                Long id = Long.parseLong(numberMatcher.group(1));
+                if (availableProductIds.contains(id) && !recommendedIds.contains(id)) {
+                    recommendedIds.add(id);
+                    log.info("通过数字模式解析到产品ID: {}", id);
+                    if (recommendedIds.size() >= 3) break; // 最多推荐3个
+                }
+            } catch (NumberFormatException e) {
+                // 忽略非数字
+            }
+        }
     }
 
     /**
