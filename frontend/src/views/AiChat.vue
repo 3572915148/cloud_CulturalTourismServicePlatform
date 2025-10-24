@@ -196,15 +196,23 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted, nextTick } from 'vue'
+import { ref, reactive, onMounted, onUnmounted, nextTick, defineOptions, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { ChatDotRound, User, Check, Close, Plus } from '@element-plus/icons-vue'
-import { getAiRecommendation, getRecommendationHistory, submitFeedback as submitFeedbackApi } from '@/api/ai'
+import { getAiRecommendation, getAiRecommendationStream, getRecommendationHistory, submitFeedback as submitFeedbackApi } from '@/api/ai'
 import { useUserStore } from '@/stores/user'
+
+// 定义组件名称，用于keep-alive缓存
+defineOptions({
+  name: 'AiChat'
+})
 
 const router = useRouter()
 const userStore = useUserStore()
+
+// localStorage key
+const CHAT_SESSION_KEY = 'ai_chat_session'
 
 // 响应式数据
 const inputMessage = ref('')
@@ -215,6 +223,56 @@ const messagesContainer = ref(null)
 
 const messages = ref([])
 const historyList = ref([])
+
+// 保存会话到localStorage
+const saveSession = () => {
+  try {
+    const session = {
+      messages: messages.value,
+      inputMessage: inputMessage.value,
+      timestamp: new Date().getTime()
+    }
+    localStorage.setItem(CHAT_SESSION_KEY, JSON.stringify(session))
+  } catch (error) {
+    console.error('保存会话失败:', error)
+  }
+}
+
+// 从localStorage恢复会话
+const restoreSession = () => {
+  try {
+    const sessionData = localStorage.getItem(CHAT_SESSION_KEY)
+    if (sessionData) {
+      const session = JSON.parse(sessionData)
+      // 检查会话是否在24小时内
+      const now = new Date().getTime()
+      const sessionAge = now - session.timestamp
+      const maxAge = 24 * 60 * 60 * 1000 // 24小时
+      
+      if (sessionAge < maxAge) {
+        messages.value = session.messages || []
+        inputMessage.value = session.inputMessage || ''
+        console.log('已恢复上次会话')
+      } else {
+        // 会话过期，清除
+        localStorage.removeItem(CHAT_SESSION_KEY)
+        console.log('会话已过期，已清除')
+      }
+    }
+  } catch (error) {
+    console.error('恢复会话失败:', error)
+  }
+}
+
+// 监听messages变化，自动保存
+watch(messages, () => {
+  saveSession()
+}, { deep: true })
+
+// 监听inputMessage变化，自动保存
+watch(inputMessage, () => {
+  saveSession()
+})
 
 // 检查登录状态
 const checkLoginStatus = () => {
@@ -394,51 +452,143 @@ const scrollToBottom = () => {
   })
 }
 
-// 模拟流式输出
+// 真正的流式输出（使用SSE）
 const simulateStreamingResponse = async (aiMessage, query) => {
+  let streamCompleted = false
+  let hasReceivedAnyContent = false
+  
   try {
-    // 先尝试调用真实的AI API
-    const response = await getAiRecommendation({ query })
+    console.log('开始流式AI推荐请求:', query)
     
-    // 如果成功，使用真实数据
-    const fullResponse = response.data.response
-    const recommendedProducts = response.data.recommendedProducts || []
-    const recommendationId = response.data.recommendationId
+    // 调用流式API
+    await getAiRecommendationStream(
+      { query },
+      {
+        // 接收到内容块
+        onContent: (content) => {
+          console.log('收到内容块，长度:', content.length, '内容:', content.substring(0, 50))
+          if (content && content.length > 0) {
+            hasReceivedAnyContent = true
+            aiMessage.content += content
+            scrollToBottom()
+          }
+        },
+        
+        // 接收到推荐产品
+        onProducts: (products, productIds) => {
+          console.log('收到推荐产品，数量:', products?.length)
+          if (products && products.length > 0) {
+            aiMessage.recommendedProducts = products
+            scrollToBottom()
+          }
+        },
+        
+        // 流式完成
+        onComplete: (recommendationId) => {
+          console.log('流式推荐完成，ID:', recommendationId, '已接收内容:', hasReceivedAnyContent, '内容长度:', aiMessage.content.length)
+          streamCompleted = true
+          aiMessage.recommendationId = recommendationId || Date.now()
+          aiMessage.isStreaming = false
+          
+          // 只有在真的没有收到任何内容时才使用降级方案
+          if (!hasReceivedAnyContent || !aiMessage.content || aiMessage.content.trim() === '') {
+            console.warn('流式完成但没有内容，使用降级方案')
+            ElMessage.warning('AI服务响应异常，为您推荐热门产品...')
+            // 给一个小延迟，让可能延迟到达的内容有机会显示
+            setTimeout(() => {
+              if (!hasReceivedAnyContent || !aiMessage.content || aiMessage.content.trim() === '') {
+                useMockData(aiMessage, query)
+              }
+            }, 500)
+          }
+        },
+        
+        // 发生错误
+        onError: (errorMessage) => {
+          console.error('流式推荐失败:', errorMessage)
+          
+          // 停止流式状态
+          streamCompleted = true
+          aiMessage.isStreaming = false
+          
+          // 如果没有内容，使用模拟数据
+          if (!hasReceivedAnyContent) {
+            ElMessage.warning('AI服务暂时不可用，正在为您推荐热门产品...')
+            useMockData(aiMessage, query)
+          } else {
+            ElMessage.error('推荐过程中发生错误: ' + errorMessage)
+          }
+        }
+      }
+    )
     
-    // 流式输出文本
-    await streamText(aiMessage, fullResponse)
-    
-    // 更新消息内容
-    aiMessage.recommendedProducts = recommendedProducts
-    aiMessage.recommendationId = recommendationId
-    aiMessage.isStreaming = false
+    // 超时保护：如果60秒后还没完成，强制结束
+    setTimeout(() => {
+      if (!streamCompleted) {
+        console.warn('流式推送超时，强制结束')
+        aiMessage.isStreaming = false
+        if (!hasReceivedAnyContent) {
+          ElMessage.warning('AI响应超时，为您推荐热门产品...')
+          useMockData(aiMessage, query)
+        }
+      }
+    }, 60000) // 60秒超时
     
   } catch (error) {
     // 如果API调用失败，使用模拟数据
-    console.log('使用模拟数据:', error.message)
+    console.error('流式AI调用失败:', error.message)
+    console.error('错误堆栈:', error)
     
-    const mockResponse = generateMockResponse(query)
-    await streamText(aiMessage, mockResponse.content)
-    
-    aiMessage.recommendedProducts = mockResponse.recommendedProducts
-    aiMessage.recommendationId = Date.now()
+    // 停止流式状态
     aiMessage.isStreaming = false
+    
+    ElMessage.warning('AI服务暂时不可用，正在为您推荐热门产品...')
+    useMockData(aiMessage, query)
   }
+}
+
+// 使用模拟数据
+const useMockData = async (aiMessage, query) => {
+  const mockResponse = generateMockResponse(query)
+  
+  // 设置为流式状态
+  aiMessage.isStreaming = true
+  aiMessage.content = ''  // 清空之前的内容
+  
+  await streamText(aiMessage, mockResponse.content)
+  
+  aiMessage.recommendedProducts = mockResponse.recommendedProducts
+  aiMessage.recommendationId = Date.now()
+  aiMessage.isStreaming = false
 }
 
 // 流式输出文本
 const streamText = async (message, text) => {
-  console.log('开始流式输出:', text.substring(0, 50) + '...')
-  message.content = ''
-  
-  // 按字符分割，但增加延迟让效果更明显
-  for (let i = 0; i < text.length; i++) {
-    message.content += text[i]
-    scrollToBottom()
-    await new Promise(resolve => setTimeout(resolve, 50)) // 50ms延迟，更明显的效果
+  // 检查文本是否有效
+  if (!text || typeof text !== 'string') {
+    console.error('streamText: 无效的文本内容', text)
+    message.content = '抱歉，AI返回了无效的内容。'
+    return
   }
   
-  console.log('流式输出完成')
+  console.log('开始流式输出，文本长度:', text.length)
+  message.content = ''
+  
+  try {
+    // 按字符分割，快速流式显示效果
+    const chunkSize = 3 // 每次显示3个字符，速度更快更自然
+    for (let i = 0; i < text.length; i += chunkSize) {
+      message.content += text.slice(i, i + chunkSize)
+      scrollToBottom()
+      await new Promise(resolve => setTimeout(resolve, 20)) // 20ms延迟，类似ChatGPT的速度
+    }
+    
+    console.log('流式输出完成，最终内容长度:', message.content.length)
+  } catch (error) {
+    console.error('流式输出错误:', error)
+    // 如果出错，直接显示全部内容
+    message.content = text
+  }
 }
 
 // 生成模拟响应
@@ -576,6 +726,8 @@ const startNewChat = () => {
   messages.value = []
   inputMessage.value = ''
   showHistory.value = false
+  // 清除保存的会话
+  localStorage.removeItem(CHAT_SESSION_KEY)
   ElMessage.success('已开始新会话')
 }
 
@@ -587,6 +739,9 @@ onMounted(() => {
     router.push('/login')
     return
   }
+  
+  // 恢复上次会话（如果存在）
+  restoreSession()
   
   // 加载历史记录
   loadHistory()

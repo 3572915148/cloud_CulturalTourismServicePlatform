@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.jingdezhen.tourism.dto.AiRecommendationRequestDTO;
 import com.jingdezhen.tourism.dto.AiRecommendationResponseDTO;
 import com.jingdezhen.tourism.vo.AiRecommendationVO;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 /**
  * AI推荐服务接口
@@ -11,9 +12,14 @@ import com.jingdezhen.tourism.vo.AiRecommendationVO;
 public interface AiRecommendationService {
 
     /**
-     * 获取AI推荐
+     * 获取AI推荐（非流式）
      */
     AiRecommendationResponseDTO getRecommendation(Long userId, AiRecommendationRequestDTO request);
+
+    /**
+     * 获取AI推荐（流式SSE）
+     */
+    void getRecommendationStream(Long userId, AiRecommendationRequestDTO request, SseEmitter emitter);
 
     /**
      * 获取用户的推荐历史

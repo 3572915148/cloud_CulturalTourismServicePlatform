@@ -20,8 +20,11 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
+import java.io.BufferedReader;
 import java.io.IOException;
+import java.io.InputStreamReader;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -66,6 +69,15 @@ public class AiRecommendationServiceImpl implements AiRecommendationService {
             
             // 4. 调用AI模型
             String aiResponse = callDeepSeekAPI(prompt);
+            
+            // 检查AI响应是否为空
+            if (aiResponse == null || aiResponse.trim().isEmpty()) {
+                log.warn("DeepSeek API返回空响应");
+                aiResponse = "抱歉，AI服务暂时无法生成推荐内容。请稍后重试。";
+            }
+            
+            log.info("AI响应内容长度: {}", aiResponse.length());
+            log.debug("AI响应内容: {}", aiResponse);
             
             // 5. 解析AI响应，提取推荐的产品ID
             List<Long> recommendedProductIds = parseRecommendedProducts(aiResponse, matchedProducts);
@@ -290,6 +302,9 @@ public class AiRecommendationServiceImpl implements AiRecommendationService {
      * 调用DeepSeek API
      */
     private String callDeepSeekAPI(String prompt) throws IOException, InterruptedException {
+        log.info("开始调用DeepSeek API...");
+        long startTime = System.currentTimeMillis();
+        
         HttpClient client = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(30))
             .build();
@@ -308,12 +323,17 @@ public class AiRecommendationServiceImpl implements AiRecommendationService {
             .uri(URI.create(DEEPSEEK_API_URL))
             .header("Content-Type", "application/json")
             .header("Authorization", "Bearer " + deepseekApiKey)
+            .timeout(Duration.ofSeconds(50))  // 设置请求超时为50秒
             .POST(HttpRequest.BodyPublishers.ofString(requestBodyJson))
             .build();
 
         HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+        
+        long endTime = System.currentTimeMillis();
+        log.info("DeepSeek API调用完成，耗时: {}ms", (endTime - startTime));
 
         if (response.statusCode() != 200) {
+            log.error("DeepSeek API调用失败，状态码: {}, 响应内容: {}", response.statusCode(), response.body());
             throw new RuntimeException("DeepSeek API调用失败: " + response.statusCode());
         }
 
@@ -493,5 +513,422 @@ public class AiRecommendationServiceImpl implements AiRecommendationService {
             
             return vo;
         }).filter(Objects::nonNull).collect(Collectors.toList());
+    }
+
+    @Override
+    public void getRecommendationStream(Long userId, AiRecommendationRequestDTO request, SseEmitter emitter) {
+        // 设置完成和超时回调
+        emitter.onCompletion(() -> log.info("SSE连接正常关闭"));
+        emitter.onTimeout(() -> {
+            log.warn("SSE连接超时");
+            emitter.complete();
+        });
+        emitter.onError(e -> log.error("SSE连接错误", e));
+        
+        try {
+            log.info("开始处理流式AI推荐请求, 用户ID: {}, 查询: {}", userId, request.getQuery());
+            
+            // 1. 在主线程中查询匹配的产品（避免异步线程访问数据库）
+            List<Product> matchedProducts = findMatchingProducts(request);
+            log.info("找到 {} 个匹配的产品", matchedProducts.size());
+            
+            // 2. 预加载所有产品详情（避免异步线程访问数据库）
+            Map<Long, Product> productCache = new HashMap<>();
+            for (Product product : matchedProducts) {
+                productCache.put(product.getId(), product);
+            }
+            
+            log.info("已预加载 {} 个产品详情", productCache.size());
+            
+            // 3. 构建上下文信息
+            String context = buildContext(matchedProducts, request);
+            
+            // 4. 构建提示词
+            String prompt = buildPrompt(request.getQuery(), context, request);
+            
+            // 5. 在新线程中处理AI调用（避免阻塞主线程，但不使用@Async避免生命周期问题）
+            Thread streamThread = new Thread(() -> {
+                try {
+                    log.info("流式推送线程开始执行");
+                    
+                    // 立即发送一条测试消息，确保SSE通道正常
+                    try {
+                        Map<String, Object> testData = new HashMap<>();
+                        testData.put("type", "content");
+                        testData.put("content", "");  // 初始化为空，让前端知道连接已建立
+                        String jsonData = objectMapper.writeValueAsString(testData);
+                        emitter.send(SseEmitter.event()
+                                .data(jsonData));
+                        log.info("初始化消息发送成功");
+                    } catch (Exception e) {
+                        log.error("发送初始化消息失败", e);
+                    }
+                    
+                    // 调用DeepSeek流式API
+                    StringBuilder fullResponse = new StringBuilder();
+                    boolean apiSuccess = false;
+                    
+                    try {
+                        log.info("准备调用DeepSeek流式API");
+                        callDeepSeekStreamAPI(prompt, emitter, fullResponse);
+                        apiSuccess = true;
+                        log.info("DeepSeek API调用成功，响应长度: {}", fullResponse.length());
+                        
+                        // 检查响应是否为空
+                        if (fullResponse.length() == 0) {
+                            log.warn("DeepSeek API返回空内容，使用降级方案");
+                            throw new IOException("DeepSeek API返回空内容");
+                        }
+                    } catch (Exception apiError) {
+                        log.error("DeepSeek API调用失败: {}", apiError.getMessage());
+                        log.error("错误类型: {}", apiError.getClass().getName());
+                        log.error("错误堆栈: ", apiError);
+                        
+                        // 发送降级消息
+                        String fallbackMessage = generateFallbackMessage(matchedProducts);
+                        fullResponse.setLength(0);  // 清空之前可能的部分响应
+                        fullResponse.append(fallbackMessage);
+                        
+                        log.info("准备发送降级消息，长度: {}", fallbackMessage.length());
+                        
+                        // 逐步发送降级消息（确保异常被捕获）
+                        try {
+                            sendContentInChunks(emitter, fallbackMessage);
+                            log.info("降级消息发送完成");
+                        } catch (IOException e) {
+                            log.error("发送降级消息失败", e);
+                            // 即使发送失败，也要继续处理，确保complete事件能发送
+                        }
+                    }
+                    
+                    String aiResponse = fullResponse.toString();
+                    
+                    // 解析AI响应，提取推荐的产品ID
+                    List<Long> recommendedProductIds = parseRecommendedProducts(aiResponse, matchedProducts);
+                    
+                    // 如果没有解析到产品ID，使用默认推荐
+                    if (recommendedProductIds.isEmpty() && !matchedProducts.isEmpty()) {
+                        recommendedProductIds = matchedProducts.stream()
+                            .limit(3)
+                            .map(Product::getId)
+                            .collect(Collectors.toList());
+                        log.info("使用默认推荐产品: {}", recommendedProductIds);
+                    }
+                    
+                    // 使用预加载的产品缓存构建推荐结果（避免访问数据库）
+                    List<AiRecommendationResponseDTO.RecommendedProductDTO> recommendedProducts = 
+                        buildRecommendedProductsFromCache(recommendedProductIds, aiResponse, productCache);
+                    
+                    // 发送产品推荐信息
+                    Map<String, Object> productsData = new HashMap<>();
+                    productsData.put("type", "products");
+                    productsData.put("products", recommendedProducts);
+                    productsData.put("productIds", recommendedProductIds);
+                    String productsJson = objectMapper.writeValueAsString(productsData);
+                    log.info("准备发送products事件，数据: {}", productsJson.substring(0, Math.min(100, productsJson.length())));
+                    emitter.send(SseEmitter.event().data(productsJson));
+                    
+                    // 保存推荐记录（这里需要在主线程完成）
+                    saveRecommendationRecord(userId, request, context, aiResponse, recommendedProductIds);
+                    
+                    // 发送完成事件
+                    Map<String, Object> completeData = new HashMap<>();
+                    completeData.put("type", "complete");
+                    completeData.put("recommendationId", System.currentTimeMillis());
+                    completeData.put("apiSuccess", apiSuccess);
+                    String completeJson = objectMapper.writeValueAsString(completeData);
+                    log.info("准备发送complete事件，数据: {}", completeJson);
+                    emitter.send(SseEmitter.event().data(completeJson));
+                    
+                    emitter.complete();
+                    log.info("流式AI推荐请求处理完成");
+                    
+                } catch (Exception e) {
+                    log.error("流式推送处理失败", e);
+                    try {
+                        Map<String, Object> errorData = new HashMap<>();
+                        errorData.put("type", "error");
+                        errorData.put("message", "AI推荐服务暂时不可用");
+                        String errorJson = objectMapper.writeValueAsString(errorData);
+                        log.error("发送error事件: {}", errorJson);
+                        emitter.send(SseEmitter.event().data(errorJson));
+                    } catch (Exception ex) {
+                        log.error("发送错误消息失败", ex);
+                    } finally {
+                        emitter.completeWithError(e);
+                    }
+                }
+            });
+            
+            streamThread.setName("AI-Stream-" + userId);
+            streamThread.setDaemon(true); // 设置为守护线程，应用关闭时自动终止
+            streamThread.start();
+            
+        } catch (Exception e) {
+            log.error("流式AI推荐失败", e);
+            try {
+                Map<String, Object> errorData = new HashMap<>();
+                errorData.put("type", "error");
+                errorData.put("message", "AI推荐服务暂时不可用，请稍后重试");
+                errorData.put("error", e.getMessage());
+                String errorJson = objectMapper.writeValueAsString(errorData);
+                log.error("发送error事件: {}", errorJson);
+                emitter.send(SseEmitter.event().data(errorJson));
+            } catch (Exception ex) {
+                log.error("发送错误消息失败", ex);
+            } finally {
+                emitter.completeWithError(e);
+            }
+        }
+    }
+    
+    /**
+     * 从缓存构建推荐产品列表（避免访问数据库）
+     */
+    private List<AiRecommendationResponseDTO.RecommendedProductDTO> buildRecommendedProductsFromCache(
+            List<Long> productIds, String aiResponse, Map<Long, Product> productCache) {
+        
+        List<AiRecommendationResponseDTO.RecommendedProductDTO> result = new ArrayList<>();
+        
+        for (Long productId : productIds) {
+            Product product = productCache.get(productId);
+            if (product == null) {
+                log.warn("产品 {} 不在缓存中", productId);
+                continue;
+            }
+            
+            AiRecommendationResponseDTO.RecommendedProductDTO dto = new AiRecommendationResponseDTO.RecommendedProductDTO();
+            dto.setId(product.getId());
+            dto.setTitle(product.getTitle());
+            dto.setDescription(product.getDescription());
+            dto.setCoverImage(product.getCoverImage());
+            dto.setPrice(product.getPrice().toString());
+            dto.setRegion(product.getRegion());
+            dto.setAddress(product.getAddress());
+            dto.setRating(product.getRating() != null ? product.getRating().doubleValue() : 0.0);
+            dto.setTags(product.getTags());
+            dto.setReason(extractProductReason(aiResponse, product.getTitle()));
+            
+            result.add(dto);
+        }
+        
+        return result;
+    }
+    
+    /**
+     * 保存推荐记录（同步方法，确保数据库可用）
+     */
+    private synchronized void saveRecommendationRecord(Long userId, AiRecommendationRequestDTO request, 
+            String context, String aiResponse, List<Long> recommendedProductIds) {
+        try {
+            AiRecommendation recommendation = new AiRecommendation();
+            recommendation.setUserId(userId);
+            recommendation.setQuery(request.getQuery());
+            recommendation.setContext(context);
+            recommendation.setResponse(aiResponse);
+            recommendation.setRecommendedProducts(objectMapper.writeValueAsString(recommendedProductIds));
+            aiRecommendationMapper.insert(recommendation);
+            log.info("推荐记录已保存，ID: {}", recommendation.getId());
+        } catch (Exception e) {
+            log.error("保存推荐记录失败（非关键错误，继续处理）", e);
+        }
+    }
+    
+    /**
+     * 生成降级消息
+     */
+    private String generateFallbackMessage(List<Product> matchedProducts) {
+        StringBuilder message = new StringBuilder();
+        message.append("根据您的需求，我为您推荐以下产品：\n\n");
+        
+        int count = Math.min(3, matchedProducts.size());
+        for (int i = 0; i < count; i++) {
+            Product p = matchedProducts.get(i);
+            message.append(String.format("%d. %s\n", i + 1, p.getTitle()));
+            message.append(String.format("   💰 价格：%s元\n", p.getPrice()));
+            message.append(String.format("   📍 地区：%s\n", p.getRegion()));
+            if (p.getRating() != null) {
+                message.append(String.format("   ⭐ 评分：%.1f\n", p.getRating()));
+            }
+            if (p.getDescription() != null && p.getDescription().length() > 0) {
+                String desc = p.getDescription().length() > 50 
+                    ? p.getDescription().substring(0, 50) + "..." 
+                    : p.getDescription();
+                message.append(String.format("   📝 简介：%s\n", desc));
+            }
+            message.append("\n");
+        }
+        
+        message.append("推荐产品：[");
+        for (int i = 0; i < count; i++) {
+            if (i > 0) message.append(", ");
+            message.append(matchedProducts.get(i).getId());
+        }
+        message.append("]\n");
+        
+        return message.toString();
+    }
+    
+    /**
+     * 分块发送内容
+     */
+    private void sendContentInChunks(SseEmitter emitter, String content) throws IOException {
+        int chunkSize = 10; // 每次发送10个字符
+        for (int i = 0; i < content.length(); i += chunkSize) {
+            String chunk = content.substring(i, Math.min(i + chunkSize, content.length()));
+            Map<String, Object> chunkData = new HashMap<>();
+            chunkData.put("type", "content");
+            chunkData.put("content", chunk);
+            String chunkJson = objectMapper.writeValueAsString(chunkData);
+            emitter.send(SseEmitter.event().data(chunkJson));
+            
+            try {
+                Thread.sleep(30); // 模拟打字效果
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+        }
+    }
+
+    /**
+     * 调用DeepSeek流式API（带重试机制）
+     */
+    private void callDeepSeekStreamAPI(String prompt, SseEmitter emitter, StringBuilder fullResponse) throws IOException, InterruptedException {
+        int maxRetries = 2;
+        int retryCount = 0;
+        Exception lastException = null;
+        
+        while (retryCount <= maxRetries) {
+            try {
+                log.info("开始调用DeepSeek流式API (尝试 {}/{})", retryCount + 1, maxRetries + 1);
+                callDeepSeekStreamAPIInternal(prompt, emitter, fullResponse);
+                return; // 成功，直接返回
+            } catch (javax.net.ssl.SSLHandshakeException e) {
+                lastException = e;
+                retryCount++;
+                log.warn("SSL握手失败 (尝试 {}/{}): {}", retryCount, maxRetries + 1, e.getMessage());
+                
+                if (retryCount <= maxRetries) {
+                    Thread.sleep(1000 * retryCount); // 指数退避
+                }
+            } catch (java.net.ConnectException | java.net.SocketTimeoutException e) {
+                lastException = e;
+                retryCount++;
+                log.warn("网络连接失败 (尝试 {}/{}): {}", retryCount, maxRetries + 1, e.getMessage());
+                
+                if (retryCount <= maxRetries) {
+                    Thread.sleep(1000 * retryCount);
+                }
+            }
+        }
+        
+        // 所有重试都失败
+        log.error("DeepSeek API调用失败，已重试 {} 次", maxRetries);
+        throw new IOException("DeepSeek API不可用: " + (lastException != null ? lastException.getMessage() : "未知错误"), lastException);
+    }
+    
+    /**
+     * 调用DeepSeek流式API的内部实现
+     */
+    private void callDeepSeekStreamAPIInternal(String prompt, SseEmitter emitter, StringBuilder fullResponse) throws IOException, InterruptedException {
+        long startTime = System.currentTimeMillis();
+        
+        // 创建HTTP客户端，禁用SSL验证（仅用于开发/测试）
+        HttpClient client = HttpClient.newBuilder()
+            .connectTimeout(Duration.ofSeconds(30))
+            .version(HttpClient.Version.HTTP_1_1) // 使用HTTP/1.1可能更稳定
+            .build();
+
+        Map<String, Object> requestBody = new HashMap<>();
+        requestBody.put("model", model);
+        requestBody.put("messages", Arrays.asList(
+            Map.of("role", "user", "content", prompt)
+        ));
+        requestBody.put("temperature", 0.7);
+        requestBody.put("max_tokens", 1000);
+        requestBody.put("stream", true);  // 启用流式响应
+
+        String requestBodyJson = objectMapper.writeValueAsString(requestBody);
+        
+        log.debug("DeepSeek API请求: {}", requestBodyJson.substring(0, Math.min(100, requestBodyJson.length())));
+
+        HttpRequest request = HttpRequest.newBuilder()
+            .uri(URI.create(DEEPSEEK_API_URL))
+            .header("Content-Type", "application/json")
+            .header("Authorization", "Bearer " + deepseekApiKey)
+            .header("Accept", "text/event-stream")
+            .timeout(Duration.ofSeconds(50))
+            .POST(HttpRequest.BodyPublishers.ofString(requestBodyJson))
+            .build();
+
+        HttpResponse<java.io.InputStream> response = client.send(request, HttpResponse.BodyHandlers.ofInputStream());
+
+        int statusCode = response.statusCode();
+        log.info("DeepSeek API响应状态码: {}", statusCode);
+        
+        if (statusCode != 200) {
+            String errorBody = "";
+            try (BufferedReader errorReader = new BufferedReader(new InputStreamReader(response.body()))) {
+                errorBody = errorReader.lines().collect(Collectors.joining("\n"));
+            }
+            log.error("DeepSeek API调用失败，状态码: {}, 响应: {}", statusCode, errorBody);
+            throw new IOException("DeepSeek API调用失败: " + statusCode + " - " + errorBody);
+        }
+
+        // 读取流式响应
+        int contentLength = 0;
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(response.body(), "UTF-8"))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                if (line.startsWith("data: ")) {
+                    String data = line.substring(6);
+                    
+                    // 跳过[DONE]标记
+                    if ("[DONE]".equals(data.trim())) {
+                        log.info("收到[DONE]标记，流式响应结束");
+                        break;
+                    }
+                    
+                    if (data.trim().isEmpty()) {
+                        continue;
+                    }
+                    
+                    try {
+                        // 解析JSON响应
+                        Map<String, Object> responseMap = objectMapper.readValue(data, Map.class);
+                        List<Map<String, Object>> choices = (List<Map<String, Object>>) responseMap.get("choices");
+                        
+                        if (choices != null && !choices.isEmpty()) {
+                            Map<String, Object> delta = (Map<String, Object>) choices.get(0).get("delta");
+                            if (delta != null && delta.containsKey("content")) {
+                                String content = (String) delta.get("content");
+                                if (content != null && !content.isEmpty()) {
+                                    fullResponse.append(content);
+                                    contentLength += content.length();
+                                    
+                                    // 发送内容块到前端
+                                    Map<String, Object> chunkData = new HashMap<>();
+                                    chunkData.put("type", "content");
+                                    chunkData.put("content", content);
+                                    String chunkJson = objectMapper.writeValueAsString(chunkData);
+                                    emitter.send(SseEmitter.event().data(chunkJson));
+                                }
+                            }
+                        }
+                    } catch (Exception e) {
+                        log.warn("解析流式响应块失败: {}, 数据: {}", e.getMessage(), data.substring(0, Math.min(50, data.length())));
+                    }
+                }
+            }
+        }
+        
+        long endTime = System.currentTimeMillis();
+        log.info("DeepSeek流式API调用成功，耗时: {}ms，总长度: {}", (endTime - startTime), contentLength);
+        
+        if (contentLength == 0) {
+            log.warn("DeepSeek API返回了空内容");
+            throw new IOException("DeepSeek API返回空内容");
+        }
     }
 }

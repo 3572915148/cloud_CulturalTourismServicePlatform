@@ -8,8 +8,10 @@ import com.jingdezhen.tourism.vo.AiRecommendationVO;
 import com.jingdezhen.tourism.vo.Result;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.MediaType;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
@@ -30,7 +32,7 @@ public class AiRecommendationController {
     private final TokenUtil tokenUtil;
 
     /**
-     * 获取AI推荐
+     * 获取AI推荐（非流式）
      */
     @PostMapping("/recommend")
     public Result<AiRecommendationResponseDTO> getRecommendation(
@@ -43,6 +45,31 @@ public class AiRecommendationController {
         AiRecommendationResponseDTO response = aiRecommendationService.getRecommendation(userId, request);
         
         return Result.success(response);
+    }
+
+    /**
+     * 获取AI推荐（流式SSE）
+     */
+    @PostMapping(value = "/recommend/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public SseEmitter getRecommendationStream(
+            @Valid @RequestBody AiRecommendationRequestDTO request,
+            HttpServletRequest httpRequest) {
+        
+        Long userId = getUserIdFromRequest(httpRequest);
+        log.info("用户 {} 请求AI流式推荐: {}", userId, request.getQuery());
+        
+        // 创建SSE发射器，设置超时时间为3分钟（缩短超时时间）
+        SseEmitter emitter = new SseEmitter(3 * 60 * 1000L);
+        
+        try {
+            // 在主线程中完成数据查询（避免异步线程访问已关闭的数据库）
+            aiRecommendationService.getRecommendationStream(userId, request, emitter);
+        } catch (Exception e) {
+            log.error("创建流式推荐任务失败", e);
+            emitter.completeWithError(e);
+        }
+        
+        return emitter;
     }
 
     /**

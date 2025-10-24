@@ -61,7 +61,11 @@
     
     <!-- 主体内容 -->
     <el-main class="main">
-      <router-view />
+      <router-view v-slot="{ Component }">
+        <keep-alive :include="['AiChat']">
+          <component :is="Component" />
+        </keep-alive>
+      </router-view>
     </el-main>
     
     <!-- 底部 -->
