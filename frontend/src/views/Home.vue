@@ -162,13 +162,28 @@ import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user'
 import { getProductList } from '@/api/product'
+import { getCategoryStatistics } from '@/api/productCategory'
 import { ElMessage } from 'element-plus'
-import { Shop, Check, ChatDotRound } from '@element-plus/icons-vue'
+import { 
+  Shop, 
+  Check, 
+  ChatDotRound,
+  LocationFilled,
+  House,
+  Food,
+  Van,
+  ShoppingCart,
+  Star,
+  Service,
+  ArrowRight,
+  Document
+} from '@element-plus/icons-vue'
 
 const router = useRouter()
 const userStore = useUserStore()
 const loading = ref(false)
 const recommendProducts = ref([])
+const categories = ref([])
 
 const banners = [
   {
@@ -188,14 +203,50 @@ const banners = [
   }
 ]
 
-const categories = [
-  { id: 1, name: '景点门票', icon: 'Place', color: '#409EFF', count: 50 },
-  { id: 2, name: '酒店住宿', icon: 'House', color: '#67C23A', count: 120 },
-  { id: 3, name: '特色美食', icon: 'Food', color: '#E6A23C', count: 80 },
-  { id: 4, name: '陶瓷体验', icon: 'Van', color: '#F56C6C', count: 30 },
-  { id: 5, name: '文化活动', icon: 'Ticket', color: '#909399', count: 40 },
-  { id: 6, name: '旅游套餐', icon: 'Suitcase', color: '#C45656', count: 25 }
-]
+// 图标映射 - 为每个分类设置独特的图标
+const iconMap = {
+  'scenic': 'LocationFilled',         // 景点门票 - 填充位置图标
+  'hotel': 'House',                   // 酒店住宿 - 房子图标
+  'restaurant': 'Food',               // 特色美食 - 食物图标
+  'culture': 'Van',                   // 文化体验 - 面包车图标
+  'shopping': 'ShoppingCart',         // 陶瓷购物 - 购物车图标
+  'default': 'ShoppingCart'
+}
+
+// 颜色映射 - 为每个分类设置不同的颜色
+const colorMap = {
+  'scenic': '#409EFF',      // 蓝色 - 景点门票
+  'hotel': '#67C23A',       // 绿色 - 酒店住宿
+  'restaurant': '#E6A23C',  // 橙色 - 特色美食
+  'culture': '#F56C6C',     // 红色 - 文化体验
+  'shopping': '#909399',    // 灰色 - 陶瓷购物
+  'default': '#409EFF'
+}
+
+// 获取分类统计信息
+const fetchCategoryStatistics = async () => {
+  try {
+    const res = await getCategoryStatistics()
+    if (res.data) {
+      categories.value = res.data.map(item => ({
+        id: item.id,
+        name: item.name,
+        icon: iconMap[item.icon] || iconMap.default,
+        color: colorMap[item.icon] || colorMap.default,
+        count: item.product_count || 0
+      }))
+    }
+  } catch (error) {
+    console.error('获取分类统计信息失败：', error)
+    // 如果获取失败，使用默认数据
+    categories.value = [
+      { id: 1, name: '景点门票', icon: 'LocationFilled', color: '#409EFF', count: 0 },
+      { id: 2, name: '酒店住宿', icon: 'House', color: '#67C23A', count: 0 },
+      { id: 3, name: '特色美食', icon: 'Food', color: '#E6A23C', count: 0 },
+      { id: 4, name: '陶瓷体验', icon: 'Van', color: '#F56C6C', count: 0 }
+    ]
+  }
+}
 
 // 获取推荐产品
 const fetchRecommendProducts = async () => {
@@ -219,6 +270,7 @@ const fetchRecommendProducts = async () => {
 }
 
 onMounted(() => {
+  fetchCategoryStatistics()
   fetchRecommendProducts()
 })
 </script>

@@ -6,8 +6,16 @@ import com.jingdezhen.tourism.mapper.ProductCategoryMapper;
 import com.jingdezhen.tourism.service.ProductCategoryService;
 import org.springframework.stereotype.Service;
 
+import java.util.List;
+import java.util.Map;
+
 @Service
 public class ProductCategoryServiceImpl extends ServiceImpl<ProductCategoryMapper, ProductCategory> implements ProductCategoryService {
+    
+    @Override
+    public List<Map<String, Object>> getCategoryStatistics() {
+        return baseMapper.getCategoryStatistics();
+    }
 }
 
 

@@ -8,6 +8,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.Map;
 
 /**
  * 产品分类Controller
@@ -31,5 +32,14 @@ public class ProductCategoryController {
         wrapper.orderByAsc(ProductCategory::getSortOrder, ProductCategory::getId);
         List<ProductCategory> list = categoryService.list(wrapper);
         return Result.success(list);
+    }
+
+    /**
+     * 获取分类统计信息（包含每个分类的产品数量）
+     */
+    @GetMapping("/statistics")
+    public Result<List<Map<String, Object>>> getCategoryStatistics() {
+        List<Map<String, Object>> statistics = categoryService.getCategoryStatistics();
+        return Result.success(statistics);
     }
 }
