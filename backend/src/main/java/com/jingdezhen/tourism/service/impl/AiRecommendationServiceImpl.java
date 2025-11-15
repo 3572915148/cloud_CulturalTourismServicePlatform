@@ -421,7 +421,9 @@ public class AiRecommendationServiceImpl implements AiRecommendationService {
                 if (availableProductIds.contains(id) && !recommendedIds.contains(id)) {
                     recommendedIds.add(id);
                     log.info("通过数字模式解析到产品ID: {}", id);
-                    if (recommendedIds.size() >= 3) break; // 最多推荐3个
+                    if (recommendedIds.size() >= 3) {
+                        break; // 最多推荐3个
+                    }
                 }
             } catch (NumberFormatException e) {
                 // 忽略非数字
@@ -761,7 +763,9 @@ public class AiRecommendationServiceImpl implements AiRecommendationService {
         
         message.append("推荐产品：[");
         for (int i = 0; i < count; i++) {
-            if (i > 0) message.append(", ");
+            if (i > 0) {
+                message.append(", ");
+            }
             message.append(matchedProducts.get(i).getId());
         }
         message.append("]\n");

@@ -101,6 +101,19 @@
                   <span v-if="message.isStreaming" class="typing-cursor">|</span>
                 </div>
                 
+                <!-- 停止按钮（当AI正在生成时显示） -->
+                <div v-if="message.isStreaming" class="stop-generation-section">
+                  <el-button 
+                    size="small" 
+                    type="danger" 
+                    plain
+                    @click="stopGeneration"
+                  >
+                    <el-icon><Close /></el-icon>
+                    停止生成
+                  </el-button>
+                </div>
+                
                 <!-- 推荐产品 -->
                 <div v-if="message.recommendedProducts && message.recommendedProducts.length > 0" 
                      class="recommended-products">
@@ -112,7 +125,7 @@
                       class="product-card"
                       @click="viewProduct(product.id)"
                     >
-                      <img :src="product.coverImage || '/placeholder.jpg'" :alt="product.title" />
+                      <img :src="getProductImageUrl(product.coverImage)" :alt="product.title" @error="handleImageError" />
                       <div class="product-info">
                         <h5>{{ product.title }}</h5>
                         <p class="product-price">¥{{ product.price }}</p>
@@ -171,19 +184,28 @@
           <div class="input-container">
             <el-input
               v-model="inputMessage"
-              placeholder="请输入您的需求，例如：我想找一个适合家庭游玩的景点"
+              placeholder="例如：家庭游玩的景点、价格实惠的酒店、陶瓷体验活动等"
               @keyup.enter="sendMessage"
               :disabled="loading"
               class="message-input"
             />
             <el-button 
+              v-if="!loading"
               @click="sendMessage" 
               type="primary" 
-              :loading="loading"
               :disabled="!inputMessage.trim()"
               class="send-button"
             >
               发送
+            </el-button>
+            <el-button 
+              v-else
+              @click="stopGeneration" 
+              type="danger" 
+              class="stop-button"
+            >
+              <el-icon><Close /></el-icon>
+              停止生成
             </el-button>
           </div>
           <div class="input-tips">
@@ -223,6 +245,9 @@ const messagesContainer = ref(null)
 
 const messages = ref([])
 const historyList = ref([])
+
+// 当前流式请求的停止函数
+let currentStreamStop = null
 
 // 保存会话到localStorage
 const saveSession = () => {
@@ -286,11 +311,11 @@ const checkLoginStatus = () => {
 
 // 快速问题
 const quickQuestions = ref([
-  '推荐一些适合家庭游玩的景点',
-  '我想找一个价格实惠的酒店',
-  '有什么特色的陶瓷体验活动',
-  '推荐一些当地美食',
-  '适合拍照的景点有哪些'
+  '家庭游玩的景点推荐',
+  '价格实惠的酒店',
+  '陶瓷体验活动',
+  '当地特色美食',
+  '适合拍照的景点'
 ])
 
 // 发送消息
@@ -432,6 +457,108 @@ const viewProduct = (productId) => {
   router.push(`/product/${productId}`)
 }
 
+// 获取产品图片URL
+const getProductImageUrl = (imagePath) => {
+  console.log('处理图片路径:', imagePath, '类型:', typeof imagePath)
+  
+  // 处理null、undefined、空字符串等情况
+  if (!imagePath || imagePath === 'null' || imagePath === 'undefined' || imagePath === '') {
+    console.log('图片路径为空，使用占位图')
+    return '/placeholder.jpg'
+  }
+  
+  // 转换为字符串，防止其他类型
+  const path = String(imagePath).trim()
+  
+  if (!path || path === 'null' || path === 'undefined') {
+    console.log('图片路径转换后为空，使用占位图')
+    return '/placeholder.jpg'
+  }
+  
+  // 如果已经是完整URL，直接返回
+  if (path.startsWith('http://') || path.startsWith('https://')) {
+    console.log('完整URL，直接返回:', path)
+    return path
+  }
+  
+  // 如果是相对路径，添加API基础URL
+  const baseURL = import.meta.env.VITE_API_BASE_URL || '/api'
+  
+  // 如果路径以 /api/file/ 开头，说明已经是正确的API路径，直接返回
+  if (path.startsWith('/api/file/')) {
+    console.log('API路径，直接返回:', path)
+    return path
+  }
+  
+  // 如果路径以 file/ 开头，添加 /api 前缀
+  if (path.startsWith('file/')) {
+    const url = `${baseURL}/${path}`
+    console.log('file/路径，转换为:', url)
+    return url
+  }
+  
+  // 如果只是文件名（如 uuid.jpg），通过 /api/file/ 访问
+  // 检查是否是简单的文件名（不包含路径分隔符，但包含扩展名）
+  if (!path.includes('/') && path.includes('.')) {
+    const url = `${baseURL}/file/${path}`
+    console.log('文件名，转换为:', url)
+    return url
+  }
+  
+  // 如果是uploads路径，通过 /api/file/ 访问（假设文件名在uploads目录下）
+  if (path.startsWith('uploads/') || path.startsWith('/uploads/')) {
+    const fileName = path.replace(/^\/?uploads\//, '')
+    const url = `${baseURL}/file/${fileName}`
+    console.log('uploads路径，转换为:', url)
+    return url
+  }
+  
+  // 如果路径以 / 开头但不是 /api/file/，可能是其他相对路径，尝试添加 /api/file/
+  if (path.startsWith('/') && !path.startsWith('/api/')) {
+    // 提取文件名（最后一个 / 之后的部分）
+    const fileName = path.substring(path.lastIndexOf('/') + 1)
+    if (fileName && fileName.includes('.')) {
+      const url = `${baseURL}/file/${fileName}`
+      console.log('相对路径，提取文件名转换为:', url)
+      return url
+    }
+  }
+  
+  // 默认尝试作为文件名处理
+  if (path.includes('.')) {
+    const url = `${baseURL}/file/${path}`
+    console.log('默认作为文件名处理，转换为:', url)
+    return url
+  }
+  
+  // 最后默认返回占位图
+  console.log('无法处理的路径格式，使用占位图:', path)
+  return '/placeholder.jpg'
+}
+
+// 处理图片加载错误
+const handleImageError = (event) => {
+  // 避免无限循环：如果已经是占位图或占位图也加载失败，则停止
+  const currentSrc = event.target.src
+  if (currentSrc.includes('placeholder.jpg') || event.target.dataset.errorHandled === 'true') {
+    // 已经处理过错误或已经是占位图，停止重试
+    event.target.style.display = 'none' // 隐藏图片
+    return
+  }
+  
+  // 标记已处理，避免重复触发
+  event.target.dataset.errorHandled = 'true'
+  
+  // 尝试加载占位图
+  const placeholderUrl = '/placeholder.jpg'
+  if (currentSrc !== placeholderUrl) {
+    event.target.src = placeholderUrl
+  } else {
+    // 如果占位图也加载失败，隐藏图片
+    event.target.style.display = 'none'
+  }
+}
+
 // 格式化AI响应
 const formatAiResponse = (content) => {
   return content.replace(/\n/g, '<br>')
@@ -452,6 +579,24 @@ const scrollToBottom = () => {
   })
 }
 
+// 停止生成
+const stopGeneration = () => {
+  console.log('用户点击停止生成按钮')
+  if (currentStreamStop) {
+    currentStreamStop()
+    currentStreamStop = null
+  }
+  
+  // 找到正在生成的消息，停止流式状态
+  const streamingMessage = messages.value.find(m => m.isStreaming)
+  if (streamingMessage) {
+    streamingMessage.isStreaming = false
+  }
+  
+  loading.value = false
+  ElMessage.info('已停止生成')
+}
+
 // 真正的流式输出（使用SSE）
 const simulateStreamingResponse = async (aiMessage, query) => {
   let streamCompleted = false
@@ -460,26 +605,120 @@ const simulateStreamingResponse = async (aiMessage, query) => {
   try {
     console.log('开始流式AI推荐请求:', query)
     
-    // 调用流式API
-    await getAiRecommendationStream(
+    // 调用流式API，获取停止函数
+    const streamControl = getAiRecommendationStream(
       { query },
       {
         // 接收到内容块
         onContent: (content) => {
-          console.log('收到内容块，长度:', content.length, '内容:', content.substring(0, 50))
+          // 检查消息是否还在流式状态，如果已经停止就不更新
+          const messageIndex = messages.value.findIndex(m => m.id === aiMessage.id)
+          const currentMessage = messageIndex !== -1 ? messages.value[messageIndex] : aiMessage
+          
+          // 如果消息已经停止流式，不再更新内容（静默忽略，不打印日志）
+          if (!currentMessage.isStreaming) {
+            return
+          }
           if (content && content.length > 0) {
             hasReceivedAnyContent = true
-            aiMessage.content += content
-            scrollToBottom()
+            // 使用Vue的响应式更新
+            if (messageIndex !== -1) {
+              // 再次检查是否还在流式状态
+              if (messages.value[messageIndex].isStreaming) {
+                messages.value[messageIndex].content += content
+              }
+            } else {
+              // 如果找不到消息，直接更新aiMessage
+              if (aiMessage.isStreaming) {
+                aiMessage.content += content
+              }
+            }
+            // 使用nextTick确保DOM更新后再滚动
+            nextTick(() => {
+              scrollToBottom()
+            })
           }
         },
         
         // 接收到推荐产品
         onProducts: (products, productIds) => {
-          console.log('收到推荐产品，数量:', products?.length)
+          console.log('收到推荐产品，数量:', products?.length, '产品数据:', products)
           if (products && products.length > 0) {
-            aiMessage.recommendedProducts = products
-            scrollToBottom()
+            // 确保每个产品都有必要的字段
+            // 先过滤掉非产品数据（分类等）
+            const validProducts = products.filter(product => {
+              // 必须是真正的产品：有 price 或 coverImage
+              return product.id && 
+                     (product.title || product.name) && 
+                     (product.price !== undefined || product.price !== null || 
+                      product.coverImage !== undefined || product.coverImage !== null)
+            })
+            
+            if (validProducts.length === 0) {
+              console.warn('没有有效的产品数据，可能是分类数据')
+              return
+            }
+            
+            const processedProducts = validProducts.map(product => {
+              console.log('处理产品:', product.id, product.title || product.name, '图片:', product.coverImage, '价格:', product.price, '价格类型:', typeof product.price)
+              
+              // 处理价格：可能是BigDecimal对象，需要转换为数字
+              let price = 0
+              if (product.price !== null && product.price !== undefined) {
+                if (typeof product.price === 'object' && product.price.toString) {
+                  // BigDecimal对象，转换为数字
+                  price = parseFloat(product.price.toString()) || 0
+                } else if (typeof product.price === 'number') {
+                  price = product.price
+                } else if (typeof product.price === 'string') {
+                  price = parseFloat(product.price) || 0
+                }
+              }
+              
+              // 处理图片路径 - 优先使用 coverImage，如果没有则尝试其他字段
+              let coverImage = product.coverImage || product.image || product.cover_image || null
+              
+              // 如果 coverImage 是空字符串，设置为 null
+              if (coverImage === '' || coverImage === 'null' || coverImage === 'undefined') {
+                coverImage = null
+              }
+              
+              // 处理标题 - 产品必须有 title，如果没有则使用 name（但这种情况应该很少）
+              const title = product.title || product.name
+              if (!title) {
+                console.warn('产品缺少标题，ID:', product.id)
+              }
+              
+              return {
+                id: product.id,
+                title: title || '未命名产品',
+                price: price,
+                region: product.region || '',
+                coverImage: coverImage,
+                category: product.category || '',
+                rating: product.rating || 0,
+                sales: product.sales || 0,
+                description: product.description || '',
+                reason: product.reason || ''
+              }
+            }).filter(product => product.id) // 再次过滤，确保有ID
+            
+            console.log('处理后的产品数据:', processedProducts)
+            
+            // 使用Vue的响应式更新
+            const messageIndex = messages.value.findIndex(m => m.id === aiMessage.id)
+            if (messageIndex !== -1) {
+              messages.value[messageIndex].recommendedProducts = processedProducts
+              console.log('已更新消息中的产品数据，消息索引:', messageIndex)
+            } else {
+              aiMessage.recommendedProducts = processedProducts
+              console.log('已更新aiMessage中的产品数据')
+            }
+            nextTick(() => {
+              scrollToBottom()
+            })
+          } else {
+            console.warn('收到空的产品列表')
           }
         },
         
@@ -487,16 +726,29 @@ const simulateStreamingResponse = async (aiMessage, query) => {
         onComplete: (recommendationId) => {
           console.log('流式推荐完成，ID:', recommendationId, '已接收内容:', hasReceivedAnyContent, '内容长度:', aiMessage.content.length)
           streamCompleted = true
-          aiMessage.recommendationId = recommendationId || Date.now()
-          aiMessage.isStreaming = false
+          
+          // 清理停止函数引用
+          currentStreamStop = null
+          
+          // 使用Vue的响应式更新
+          const messageIndex = messages.value.findIndex(m => m.id === aiMessage.id)
+          if (messageIndex !== -1) {
+            messages.value[messageIndex].recommendationId = recommendationId || Date.now()
+            messages.value[messageIndex].isStreaming = false
+          } else {
+            aiMessage.recommendationId = recommendationId || Date.now()
+            aiMessage.isStreaming = false
+          }
           
           // 只有在真的没有收到任何内容时才使用降级方案
-          if (!hasReceivedAnyContent || !aiMessage.content || aiMessage.content.trim() === '') {
+          const finalContent = messageIndex !== -1 ? messages.value[messageIndex].content : aiMessage.content
+          if (!hasReceivedAnyContent || !finalContent || finalContent.trim() === '') {
             console.warn('流式完成但没有内容，使用降级方案')
             ElMessage.warning('AI服务响应异常，为您推荐热门产品...')
             // 给一个小延迟，让可能延迟到达的内容有机会显示
             setTimeout(() => {
-              if (!hasReceivedAnyContent || !aiMessage.content || aiMessage.content.trim() === '') {
+              const checkContent = messageIndex !== -1 ? messages.value[messageIndex].content : aiMessage.content
+              if (!hasReceivedAnyContent || !checkContent || checkContent.trim() === '') {
                 useMockData(aiMessage, query)
               }
             }, 500)
@@ -505,11 +757,30 @@ const simulateStreamingResponse = async (aiMessage, query) => {
         
         // 发生错误
         onError: (errorMessage) => {
+          // 检查消息是否已经停止（用户主动停止）
+          const messageIndex = messages.value.findIndex(m => m.id === aiMessage.id)
+          const currentMessage = messageIndex !== -1 ? messages.value[messageIndex] : aiMessage
+          
+          // 如果消息已经停止流式（用户主动停止），不显示错误
+          if (!currentMessage.isStreaming) {
+            console.log('用户已停止，忽略错误消息')
+            streamCompleted = true
+            currentStreamStop = null
+            return
+          }
+          
           console.error('流式推荐失败:', errorMessage)
           
           // 停止流式状态
           streamCompleted = true
-          aiMessage.isStreaming = false
+          currentStreamStop = null
+          
+          // 使用Vue的响应式更新
+          if (messageIndex !== -1) {
+            messages.value[messageIndex].isStreaming = false
+          } else {
+            aiMessage.isStreaming = false
+          }
           
           // 如果没有内容，使用模拟数据
           if (!hasReceivedAnyContent) {
@@ -522,11 +793,17 @@ const simulateStreamingResponse = async (aiMessage, query) => {
       }
     )
     
+    // 保存停止函数，以便用户可以随时停止
+    if (streamControl && streamControl.stop) {
+      currentStreamStop = streamControl.stop
+    }
+    
     // 超时保护：如果60秒后还没完成，强制结束
     setTimeout(() => {
       if (!streamCompleted) {
         console.warn('流式推送超时，强制结束')
         aiMessage.isStreaming = false
+        currentStreamStop = null
         if (!hasReceivedAnyContent) {
           ElMessage.warning('AI响应超时，为您推荐热门产品...')
           useMockData(aiMessage, query)
@@ -541,9 +818,19 @@ const simulateStreamingResponse = async (aiMessage, query) => {
     
     // 停止流式状态
     aiMessage.isStreaming = false
+    currentStreamStop = null
+    
+    // 如果是用户主动取消，不显示错误消息
+    if (error.name === 'AbortError') {
+      console.log('用户已取消请求')
+      return
+    }
     
     ElMessage.warning('AI服务暂时不可用，正在为您推荐热门产品...')
     useMockData(aiMessage, query)
+  } finally {
+    // 清理停止函数引用
+    currentStreamStop = null
   }
 }
 
@@ -1055,6 +1342,16 @@ onMounted(() => {
 .feedback-label {
   font-size: 12px;
   color: #606266;
+}
+
+.stop-generation-section {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid #e4e7ed;
+}
+
+.stop-button {
+  margin-left: 8px;
 }
 
 .loading-message {
