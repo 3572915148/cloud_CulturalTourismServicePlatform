@@ -46,12 +46,16 @@ public class RedisConfig {
         public static final String SESSION = "agent:session:";
         /** 推荐记录映射前缀 */
         public static final String RECOMMENDATION_SESSION_MAPPING = "recommendation:session:";
+        /** 用户推荐记录ID列表前缀 */
+        public static final String USER_RECOMMENDATION_IDS = "user:recommendation:ids:";
         /** 连接测试前缀 */
         public static final String CONNECTION_TEST = "redis:connection:test:";
         /** 空值缓存前缀 */
         public static final String NULL_CACHE = "null:cache:";
         /** 分布式锁前缀 */
         public static final String LOCK = "lock:";
+        /** 商品库存前缀 */
+        public static final String STOCK = "stock:product:";
     }
     
     /**
@@ -62,6 +66,8 @@ public class RedisConfig {
         public static final long SESSION_TIMEOUT = 30 * 60;
         /** 推荐记录映射过期时间：7天 */
         public static final long RECOMMENDATION_MAPPING = 7 * 24 * 60 * 60;
+        /** 用户推荐记录ID列表过期时间：30天（历史记录需要长期保存） */
+        public static final long USER_RECOMMENDATION_IDS = 30 * 24 * 60 * 60;
         /** 连接测试过期时间：10秒 */
         public static final long CONNECTION_TEST = 10;
         /** 空值缓存过期时间：5分钟 */

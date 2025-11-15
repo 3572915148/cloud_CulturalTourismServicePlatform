@@ -88,25 +88,47 @@ public class SessionConsistencyService {
             // 将推荐记录ID保存到会话上下文中，建立关联
             context.setVariable(RECOMMENDATION_ID_KEY, recommendationId);
             
+            // 更新会话中的推荐记录ID列表
+            @SuppressWarnings("unchecked")
+            List<Long> recommendationIds = (List<Long>) context.getVariable(RECOMMENDATION_IDS_KEY);
+            if (recommendationIds == null) {
+                recommendationIds = new ArrayList<>();
+            }
+            if (!recommendationIds.contains(recommendationId)) {
+                recommendationIds.add(recommendationId);
+            }
+            context.setVariable(RECOMMENDATION_IDS_KEY, recommendationIds);
+            
             // 建立推荐记录ID到会话ID的映射（用于快速查找）
             if (sessionManager != null) {
-                try {
-                    // 保存映射关系：推荐记录ID -> 会话ID
-                    String mappingKey = RedisConfig.KeyPrefix.RECOMMENDATION_SESSION_MAPPING + recommendationId;
-                    // 映射关系使用较长的过期时间（7天），因为历史记录需要长期保存
-                    StringRedisTemplate redisTemplate = sessionManager.getRedisTemplate();
-                    if (redisTemplate != null) {
+                StringRedisTemplate redisTemplate = sessionManager.getRedisTemplate();
+                if (redisTemplate != null) {
+                    try {
+                        // 1. 保存映射关系：推荐记录ID -> 会话ID（7天过期）
+                        String mappingKey = RedisConfig.KeyPrefix.RECOMMENDATION_SESSION_MAPPING + recommendationId;
                         redisTemplate.opsForValue().set(
                             mappingKey, 
                             context.getSessionId(), 
                             RedisConfig.ExpireTime.RECOMMENDATION_MAPPING, 
                             java.util.concurrent.TimeUnit.SECONDS
                         );
+                        log.info("✅ 已建立推荐记录到会话的映射: recommendationId={} -> sessionId={}", 
+                            recommendationId, context.getSessionId());
+                        
+                        // 2. 保存用户推荐记录ID列表到Redis（独立存储，30天过期）
+                        String userRecommendationIdsKey = RedisConfig.KeyPrefix.USER_RECOMMENDATION_IDS + context.getUserId();
+                        String recommendationIdsJson = JSON.toJSONString(recommendationIds);
+                        redisTemplate.opsForValue().set(
+                            userRecommendationIdsKey,
+                            recommendationIdsJson,
+                            RedisConfig.ExpireTime.USER_RECOMMENDATION_IDS,
+                            java.util.concurrent.TimeUnit.SECONDS
+                        );
+                        log.info("✅ 已保存用户推荐记录ID列表到Redis: userId={}, recommendationIds={}, 过期时间={}天", 
+                            context.getUserId(), recommendationIds, RedisConfig.ExpireTime.USER_RECOMMENDATION_IDS / (24 * 60 * 60));
+                    } catch (Exception e) {
+                        log.warn("⚠️ 保存推荐记录映射或ID列表失败（不影响主流程）: recommendationId={}", recommendationId, e);
                     }
-                    log.info("✅ 已建立推荐记录到会话的映射: recommendationId={} -> sessionId={}", 
-                        recommendationId, context.getSessionId());
-                } catch (Exception e) {
-                    log.warn("⚠️ 建立推荐记录映射失败（不影响主流程）: recommendationId={}", recommendationId, e);
                 }
                 
                 // 更新Redis会话（包含推荐记录ID）
@@ -217,7 +239,7 @@ public class SessionConsistencyService {
                 if (sessionManager != null) {
                     StringRedisTemplate redisTemplateForSave = sessionManager.getRedisTemplate();
                     if (redisTemplateForSave != null) {
-                        // 保存会话到Redis
+                        // 1. 保存会话到Redis
                         redisTemplateForSave.opsForValue().set(
                             sessionManager.getSessionKey(newSessionId),
                             com.alibaba.fastjson2.JSON.toJSONString(context),
@@ -225,7 +247,7 @@ public class SessionConsistencyService {
                             java.util.concurrent.TimeUnit.SECONDS
                         );
                         
-                        // 建立推荐记录ID到会话ID的映射（使用较长的过期时间）
+                        // 2. 建立推荐记录ID到会话ID的映射（使用较长的过期时间）
                         String mappingKey = RedisConfig.KeyPrefix.RECOMMENDATION_SESSION_MAPPING + recommendationId;
                         redisTemplateForSave.opsForValue().set(
                             mappingKey,
@@ -233,6 +255,35 @@ public class SessionConsistencyService {
                             RedisConfig.ExpireTime.RECOMMENDATION_MAPPING,
                             java.util.concurrent.TimeUnit.SECONDS
                         );
+                        
+                        // 3. 保存用户推荐记录ID列表到Redis（独立存储，30天过期）
+                        // 先尝试从Redis获取现有的列表，如果存在则合并
+                        String userRecommendationIdsKey = RedisConfig.KeyPrefix.USER_RECOMMENDATION_IDS + userId;
+                        String existingIdsJson = redisTemplateForSave.opsForValue().get(userRecommendationIdsKey);
+                        if (existingIdsJson != null && !existingIdsJson.isEmpty()) {
+                            try {
+                                List<Long> existingIds = JSON.parseObject(existingIdsJson, 
+                                    new com.alibaba.fastjson2.TypeReference<List<Long>>() {});
+                                if (existingIds != null && !existingIds.contains(recommendationId)) {
+                                    existingIds.add(recommendationId);
+                                    recommendationIds = existingIds;
+                                    context.setVariable(RECOMMENDATION_IDS_KEY, recommendationIds);
+                                }
+                            } catch (Exception e) {
+                                log.warn("⚠️ 解析现有推荐记录ID列表失败，将使用新列表: userId={}", userId, e);
+                            }
+                        }
+                        
+                        // 保存或更新用户推荐记录ID列表
+                        String recommendationIdsJson = JSON.toJSONString(recommendationIds);
+                        redisTemplateForSave.opsForValue().set(
+                            userRecommendationIdsKey,
+                            recommendationIdsJson,
+                            RedisConfig.ExpireTime.USER_RECOMMENDATION_IDS,
+                            java.util.concurrent.TimeUnit.SECONDS
+                        );
+                        log.info("✅ 已保存用户推荐记录ID列表到Redis: userId={}, recommendationIds={}, 过期时间={}天", 
+                            userId, recommendationIds, RedisConfig.ExpireTime.USER_RECOMMENDATION_IDS / (24 * 60 * 60));
                     }
                 }
                 
@@ -294,9 +345,33 @@ public class SessionConsistencyService {
                 return true;
             }
             
-            // 检查会话中是否有推荐记录ID列表
-            @SuppressWarnings("unchecked")
-            List<Long> recommendationIds = (List<Long>) context.getVariable(RECOMMENDATION_IDS_KEY);
+            // 优先从Redis中获取用户推荐记录ID列表（独立存储，过期时间更长）
+            List<Long> recommendationIds = null;
+            if (sessionManager != null) {
+                StringRedisTemplate redisTemplate = sessionManager.getRedisTemplate();
+                if (redisTemplate != null) {
+                    try {
+                        String userRecommendationIdsKey = RedisConfig.KeyPrefix.USER_RECOMMENDATION_IDS + context.getUserId();
+                        String recommendationIdsJson = redisTemplate.opsForValue().get(userRecommendationIdsKey);
+                        if (recommendationIdsJson != null && !recommendationIdsJson.isEmpty()) {
+                            recommendationIds = JSON.parseObject(recommendationIdsJson, new com.alibaba.fastjson2.TypeReference<List<Long>>() {});
+                            log.info("✅ 从Redis获取用户推荐记录ID列表: userId={}, count={}", 
+                                context.getUserId(), recommendationIds != null ? recommendationIds.size() : 0);
+                        }
+                    } catch (Exception e) {
+                        log.warn("⚠️ 从Redis获取用户推荐记录ID列表失败，将使用会话中的列表: userId={}", 
+                            context.getUserId(), e);
+                    }
+                }
+            }
+            
+            // 如果Redis中没有，则从会话上下文中获取
+            if (recommendationIds == null || recommendationIds.isEmpty()) {
+                @SuppressWarnings("unchecked")
+                List<Long> contextIds = (List<Long>) context.getVariable(RECOMMENDATION_IDS_KEY);
+                recommendationIds = contextIds;
+            }
+            
             if (recommendationIds == null || recommendationIds.isEmpty()) {
                 // 没有推荐记录ID，说明可能还没有保存过推荐历史，这是正常的
                 return true;
@@ -312,11 +387,13 @@ public class SessionConsistencyService {
             }
             
             if (!missingIds.isEmpty()) {
-                log.warn("⚠️ 数据不一致：Redis会话中有{}个推荐记录ID在数据库中不存在: {}", 
+                log.warn("⚠️ 数据不一致：Redis中有{}个推荐记录ID在数据库中不存在: {}", 
                     missingIds.size(), missingIds);
                 
                 // 从列表中移除不存在的ID
                 recommendationIds.removeAll(missingIds);
+                
+                // 更新会话上下文
                 if (recommendationIds.isEmpty()) {
                     context.setVariable(RECOMMENDATION_IDS_KEY, null);
                     context.setVariable(RECOMMENDATION_ID_KEY, null);
@@ -326,8 +403,31 @@ public class SessionConsistencyService {
                     context.setVariable(RECOMMENDATION_ID_KEY, recommendationIds.get(recommendationIds.size() - 1));
                 }
                 
-                // 更新Redis会话
+                // 更新Redis中的用户推荐记录ID列表
                 if (sessionManager != null) {
+                    StringRedisTemplate redisTemplate = sessionManager.getRedisTemplate();
+                    if (redisTemplate != null) {
+                        try {
+                            String userRecommendationIdsKey = RedisConfig.KeyPrefix.USER_RECOMMENDATION_IDS + context.getUserId();
+                            if (recommendationIds.isEmpty()) {
+                                // 如果列表为空，删除Redis中的key
+                                redisTemplate.delete(userRecommendationIdsKey);
+                            } else {
+                                // 更新Redis中的列表
+                                String recommendationIdsJson = JSON.toJSONString(recommendationIds);
+                                redisTemplate.opsForValue().set(
+                                    userRecommendationIdsKey,
+                                    recommendationIdsJson,
+                                    RedisConfig.ExpireTime.USER_RECOMMENDATION_IDS,
+                                    java.util.concurrent.TimeUnit.SECONDS
+                                );
+                            }
+                        } catch (Exception e) {
+                            log.warn("⚠️ 更新Redis中的用户推荐记录ID列表失败: userId={}", context.getUserId(), e);
+                        }
+                    }
+                    
+                    // 更新Redis会话
                     try {
                         sessionManager.saveSession(context.getSessionId(), context);
                         log.info("✅ 已修复数据不一致，移除了{}个不存在的推荐记录ID", missingIds.size());
