@@ -2,10 +2,12 @@ package com.jingdezhen.tourism.service;
 
 import com.alibaba.fastjson2.JSON;
 import com.jingdezhen.tourism.agent.core.ConversationContext;
+import com.jingdezhen.tourism.config.RedisConfig;
 import com.jingdezhen.tourism.entity.AiRecommendation;
 import com.jingdezhen.tourism.mapper.AiRecommendationMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
@@ -29,6 +31,7 @@ public class SessionConsistencyService {
     @Autowired(required = false)
     private AiRecommendationMapper aiRecommendationMapper;
     
+    
     /**
      * 保存推荐记录ID到会话上下文中
      * 用于建立Redis会话和数据库记录之间的关联
@@ -41,11 +44,7 @@ public class SessionConsistencyService {
      */
     private static final String RECOMMENDATION_IDS_KEY = "recommendationIds";
     
-    /**
-     * Redis中推荐记录ID到会话ID的映射前缀
-     * 格式：recommendation:session:{recommendationId} -> {sessionId}
-     */
-    private static final String RECOMMENDATION_SESSION_MAPPING_PREFIX = "recommendation:session:";
+    // 使用RedisConfig中的常量，不再重复定义
     
     /**
      * 随机过期时间范围（秒）
@@ -93,14 +92,17 @@ public class SessionConsistencyService {
             if (sessionManager != null) {
                 try {
                     // 保存映射关系：推荐记录ID -> 会话ID
-                    String mappingKey = RECOMMENDATION_SESSION_MAPPING_PREFIX + recommendationId;
+                    String mappingKey = RedisConfig.KeyPrefix.RECOMMENDATION_SESSION_MAPPING + recommendationId;
                     // 映射关系使用较长的过期时间（7天），因为历史记录需要长期保存
-                    sessionManager.getRedisTemplate().opsForValue().set(
-                        mappingKey, 
-                        context.getSessionId(), 
-                        7 * 24 * 60 * 60, 
-                        java.util.concurrent.TimeUnit.SECONDS
-                    );
+                    StringRedisTemplate redisTemplate = sessionManager.getRedisTemplate();
+                    if (redisTemplate != null) {
+                        redisTemplate.opsForValue().set(
+                            mappingKey, 
+                            context.getSessionId(), 
+                            RedisConfig.ExpireTime.RECOMMENDATION_MAPPING, 
+                            java.util.concurrent.TimeUnit.SECONDS
+                        );
+                    }
                     log.info("✅ 已建立推荐记录到会话的映射: recommendationId={} -> sessionId={}", 
                         recommendationId, context.getSessionId());
                 } catch (Exception e) {
@@ -158,21 +160,26 @@ public class SessionConsistencyService {
         
         try {
             // 第一步：尝试从Redis查找会话
-            String mappingKey = RECOMMENDATION_SESSION_MAPPING_PREFIX + recommendationId;
-            String sessionId = sessionManager.getRedisTemplate().opsForValue().get(mappingKey);
-            
-            if (sessionId != null && !sessionId.isEmpty()) {
-                // 找到了映射关系，尝试从Redis获取会话
-                ConversationContext context = sessionManager.getSession(sessionId);
-                if (context != null && context.getUserId().equals(userId)) {
-                    log.info("✅ 从Redis找到会话: recommendationId={}, sessionId={}", recommendationId, sessionId);
-                    return context;
-                } else {
-                    log.info("ℹ️ Redis中的会话已过期或不存在，将从数据库恢复: recommendationId={}, sessionId={}", 
-                        recommendationId, sessionId);
-                }
+            StringRedisTemplate redisTemplate = sessionManager != null ? sessionManager.getRedisTemplate() : null;
+            if (redisTemplate == null) {
+                log.info("ℹ️ Redis未配置，将从数据库恢复: recommendationId={}", recommendationId);
             } else {
-                log.info("ℹ️ Redis中没有找到推荐记录的映射关系，将从数据库恢复: recommendationId={}", recommendationId);
+                String mappingKey = RedisConfig.KeyPrefix.RECOMMENDATION_SESSION_MAPPING + recommendationId;
+                String sessionId = redisTemplate.opsForValue().get(mappingKey);
+            
+                if (sessionId != null && !sessionId.isEmpty()) {
+                    // 找到了映射关系，尝试从Redis获取会话
+                    ConversationContext context = sessionManager.getSession(sessionId);
+                    if (context != null && context.getUserId().equals(userId)) {
+                        log.info("✅ 从Redis找到会话: recommendationId={}, sessionId={}", recommendationId, sessionId);
+                        return context;
+                    } else {
+                        log.info("ℹ️ Redis中的会话已过期或不存在，将从数据库恢复: recommendationId={}, sessionId={}", 
+                            recommendationId, sessionId);
+                    }
+                } else {
+                    log.info("ℹ️ Redis中没有找到推荐记录的映射关系，将从数据库恢复: recommendationId={}", recommendationId);
+                }
             }
             
             // 第二步：从MySQL数据库查找推荐记录
@@ -207,21 +214,27 @@ public class SessionConsistencyService {
             // 第四步：保存到Redis，使用随机过期时间（防止缓存雪崩）
             long randomExpireSeconds = generateRandomExpireTime();
             try {
-                // 保存会话到Redis
-                sessionManager.getRedisTemplate().opsForValue().set(
-                    sessionManager.getSessionKey(newSessionId),
-                    com.alibaba.fastjson2.JSON.toJSONString(context),
-                    randomExpireSeconds,
-                    java.util.concurrent.TimeUnit.SECONDS
-                );
-                
-                // 建立推荐记录ID到会话ID的映射（使用较长的过期时间）
-                sessionManager.getRedisTemplate().opsForValue().set(
-                    mappingKey,
-                    newSessionId,
-                    7 * 24 * 60 * 60, // 7天
-                    java.util.concurrent.TimeUnit.SECONDS
-                );
+                if (sessionManager != null) {
+                    StringRedisTemplate redisTemplateForSave = sessionManager.getRedisTemplate();
+                    if (redisTemplateForSave != null) {
+                        // 保存会话到Redis
+                        redisTemplateForSave.opsForValue().set(
+                            sessionManager.getSessionKey(newSessionId),
+                            com.alibaba.fastjson2.JSON.toJSONString(context),
+                            randomExpireSeconds,
+                            java.util.concurrent.TimeUnit.SECONDS
+                        );
+                        
+                        // 建立推荐记录ID到会话ID的映射（使用较长的过期时间）
+                        String mappingKey = RedisConfig.KeyPrefix.RECOMMENDATION_SESSION_MAPPING + recommendationId;
+                        redisTemplateForSave.opsForValue().set(
+                            mappingKey,
+                            newSessionId,
+                            RedisConfig.ExpireTime.RECOMMENDATION_MAPPING,
+                            java.util.concurrent.TimeUnit.SECONDS
+                        );
+                    }
+                }
                 
                 log.info("✅ 从数据库恢复会话并保存到Redis: recommendationId={}, sessionId={}, 过期时间={}秒 ({}分钟)", 
                     recommendationId, newSessionId, randomExpireSeconds, randomExpireSeconds / 60);
