@@ -370,6 +370,15 @@ export function submitFeedback(data) {
   })
 }
 
+// 根据推荐记录ID恢复会话
+export function restoreSession(recommendationId) {
+  return request({
+    url: '/ai/restore-session',
+    method: 'post',
+    params: { recommendationId }
+  })
+}
+
 // 获取推荐统计
 export function getRecommendationStats() {
   return request({

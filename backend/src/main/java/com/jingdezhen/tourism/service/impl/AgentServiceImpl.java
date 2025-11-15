@@ -8,8 +8,13 @@ import com.jingdezhen.tourism.agent.core.ConversationContext;
 import com.jingdezhen.tourism.agent.tool.AgentTool;
 import com.jingdezhen.tourism.agent.tool.ToolRegistry;
 import com.jingdezhen.tourism.agent.tool.ToolResult;
+import com.jingdezhen.tourism.entity.AiRecommendation;
+import com.jingdezhen.tourism.mapper.AiRecommendationMapper;
 import com.jingdezhen.tourism.service.AgentService;
+import com.jingdezhen.tourism.service.RedisSessionManager;
+import com.jingdezhen.tourism.service.SessionConsistencyService;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
@@ -23,7 +28,6 @@ import java.net.http.HttpResponse;
 import java.time.LocalDateTime;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Agent服务实现类
@@ -36,23 +40,21 @@ public class AgentServiceImpl implements AgentService {
     
     private final ToolRegistry toolRegistry;
     
+    @Autowired
+    private RedisSessionManager sessionManager;
+    
+    @Autowired(required = false)
+    private AiRecommendationMapper aiRecommendationMapper;
+    
+    @Autowired(required = false)
+    private SessionConsistencyService consistencyService;
+    
     /**
-     * 构造函数，启动会话清理定时任务
+     * 构造函数
      */
     public AgentServiceImpl(ToolRegistry toolRegistry) {
         this.toolRegistry = toolRegistry;
-        startSessionCleanupTask();
     }
-    
-    /**
-     * 会话存储（MVP版本使用内存，生产环境建议使用Redis）
-     */
-    private final Map<String, ConversationContext> sessions = new ConcurrentHashMap<>();
-    
-    /**
-     * 会话超时时间（30分钟）
-     */
-    private static final long SESSION_TIMEOUT_MILLIS = 30 * 60 * 1000L;
     
     @Value("${spring.ai.deepseek.api-key:}")
     private String apiKey;
@@ -77,22 +79,49 @@ public class AgentServiceImpl implements AgentService {
             }
             
         // 获取或创建会话
-        ConversationContext context = sessions.computeIfAbsent(sessionId, 
-            k -> createNewContext(sessionId, userId));
+        log.info("🔍 [会话管理] 开始获取会话: sessionId={}, userId={}", sessionId, userId);
+        ConversationContext context = sessionManager.getSession(sessionId);
+        if (context == null) {
+            log.info("📝 [会话管理] 会话不存在，创建新会话: sessionId={}, userId={}", sessionId, userId);
+            context = createNewContext(sessionId, userId);
+            log.info("💾 [会话管理] 保存新会话到Redis: sessionId={}", sessionId);
+            sessionManager.saveSession(sessionId, context);
+            log.info("✅ [会话管理] 新会话已保存: sessionId={}", sessionId);
+        } else {
+            log.info("✅ [会话管理] 从Redis获取到现有会话: sessionId={}, 历史消息数={}", 
+                sessionId, context.getHistory() != null ? context.getHistory().size() : 0);
+            
+            // 检查数据一致性
+            if (consistencyService != null) {
+                consistencyService.checkAndFixConsistency(context);
+            }
+        }
         
         // 验证用户ID
         if (!context.getUserId().equals(userId)) {
+            log.warn("⚠️ [会话管理] 会话用户ID不匹配: sessionId={}, 会话userId={}, 请求userId={}", 
+                sessionId, context.getUserId(), userId);
                 sendError(emitter, "会话不属于当前用户");
             return;
         }
         
         // 添加用户消息到历史
+        log.info("💬 [会话管理] 添加用户消息到会话历史: sessionId={}, 消息长度={}", sessionId, message.length());
         context.addMessage(ConversationContext.Message.user(message));
+        
+        // 保存会话（每次更新后都要保存）
+        log.info("💾 [会话管理] 更新会话后保存到Redis: sessionId={}, 当前历史消息数={}", 
+            sessionId, context.getHistory() != null ? context.getHistory().size() : 0);
+        sessionManager.saveSession(sessionId, context);
+        log.info("✅ [会话管理] 会话更新已保存: sessionId={}", sessionId);
+        
+        // 使用final引用以便在lambda中使用
+        final ConversationContext finalContext = context;
         
         // 异步处理
         CompletableFuture.runAsync(() -> {
             try {
-                processAgentChat(context, emitter);
+                processAgentChat(finalContext, emitter);
                 } catch (InterruptedException e) {
                     log.error("Agent处理被中断: sessionId={}", sessionId, e);
                     Thread.currentThread().interrupt();
@@ -289,7 +318,17 @@ public class AgentServiceImpl implements AgentService {
         if (assistantMessage.length() > 0) {
             context.addMessage(ConversationContext.Message.assistant(
                 assistantMessage.toString()));
+            log.info("💾 [会话管理] 保存AI回复到会话: sessionId={}, 回复长度={}", 
+                context.getSessionId(), assistantMessage.length());
         }
+        
+            // 保存会话
+            log.info("💾 [会话管理] 对话完成，保存会话到Redis: sessionId={}", context.getSessionId());
+            sessionManager.saveSession(context.getSessionId(), context);
+            log.info("✅ [会话管理] 会话保存完成: sessionId={}", context.getSessionId());
+            
+            // 保存推荐历史到数据库（没有工具调用的情况）
+            saveRecommendationHistory(context, null, assistantMessage.toString());
         
             log.info("✅ Agent对话处理完成");
         
@@ -393,6 +432,9 @@ public class AgentServiceImpl implements AgentService {
                                                      SseEmitter emitter,
                                                      String preliminaryMessage) throws Exception {
         
+        // 保存工具结果，用于后续保存推荐历史
+        context.setVariable("lastToolResults", toolResults);
+        
         // 将工具结果添加到对话历史中（只包含JSON数据，不包含提示词）
         // 提示词已经在系统提示词中说明，不需要在这里重复
         StringBuilder toolResultsText = new StringBuilder();
@@ -481,7 +523,17 @@ public class AgentServiceImpl implements AgentService {
         // 保存AI的最终回复
         if (finalResponse.length() > 0) {
             context.addMessage(ConversationContext.Message.assistant(finalResponse.toString()));
+            log.info("💾 [会话管理] 保存AI最终回复到会话: sessionId={}, 回复长度={}", 
+                context.getSessionId(), finalResponse.length());
         }
+        
+        // 保存会话
+        log.info("💾 [会话管理] 工具调用完成，保存会话到Redis: sessionId={}", context.getSessionId());
+        sessionManager.saveSession(context.getSessionId(), context);
+        log.info("✅ [会话管理] 会话保存完成: sessionId={}", context.getSessionId());
+        
+        // 保存推荐历史到数据库
+        saveRecommendationHistory(context, toolResults, finalResponse.toString());
         
         log.info("✅ Agent对话处理完成（含工具调用）");
         
@@ -781,14 +833,8 @@ public class AgentServiceImpl implements AgentService {
     
     @Override
     public ConversationContext getSession(String sessionId, Long userId) {
-        ConversationContext context = sessions.get(sessionId);
+        ConversationContext context = sessionManager.getSession(sessionId);
         if (context != null && context.getUserId().equals(userId)) {
-            // 检查会话是否过期
-            if (isSessionExpired(context)) {
-                sessions.remove(sessionId);
-                log.info("🗑️ 会话已过期并清除: sessionId={}", sessionId);
-                return null;
-            }
             return context;
         }
         return null;
@@ -796,9 +842,9 @@ public class AgentServiceImpl implements AgentService {
     
     @Override
     public void clearSession(String sessionId, Long userId) {
-        ConversationContext context = sessions.get(sessionId);
+        ConversationContext context = sessionManager.getSession(sessionId);
         if (context != null && context.getUserId().equals(userId)) {
-            sessions.remove(sessionId);
+            sessionManager.deleteSession(sessionId);
             log.info("🗑️ 清除会话: sessionId={}", sessionId);
         }
     }
@@ -818,64 +864,217 @@ public class AgentServiceImpl implements AgentService {
         return tools;
     }
     
+    @Override
+    public ConversationContext restoreSessionByRecommendationId(Long recommendationId, Long userId) {
+        if (consistencyService != null) {
+            return consistencyService.restoreSessionByRecommendationId(recommendationId, userId);
+        }
+        log.warn("SessionConsistencyService未注入，无法恢复会话");
+        return null;
+    }
+    
     /**
-     * 启动会话清理定时任务
+     * 保存推荐历史到数据库
+     * 
+     * @param context 会话上下文
+     * @param toolResults 工具执行结果（可能为null）
+     * @param aiResponse AI回复内容
      */
-    private void startSessionCleanupTask() {
-        // 每10分钟清理一次过期会话
-        CompletableFuture.runAsync(() -> {
-            while (true) {
-                try {
-                    Thread.sleep(10 * 60 * 1000L); // 10分钟
-                    cleanupExpiredSessions();
-                } catch (InterruptedException e) {
-                    log.error("会话清理任务被中断", e);
-                    Thread.currentThread().interrupt();
+    private void saveRecommendationHistory(ConversationContext context, 
+                                          List<ToolResult> toolResults, 
+                                          String aiResponse) {
+        try {
+            // 如果Mapper未注入，跳过保存（兼容性处理）
+            if (aiRecommendationMapper == null) {
+                log.debug("AiRecommendationMapper未注入，跳过保存推荐历史");
+                return;
+            }
+            
+            // 从会话历史中提取用户查询（最后一条用户消息）
+            String userQuery = null;
+            if (context.getHistory() != null && !context.getHistory().isEmpty()) {
+                for (int i = context.getHistory().size() - 1; i >= 0; i--) {
+                    ConversationContext.Message msg = context.getHistory().get(i);
+                    if ("user".equals(msg.getRole())) {
+                        userQuery = msg.getContent();
                     break;
                 }
             }
-        });
-        
-        log.info("✅ 会话清理定时任务已启动");
+            }
+            
+            // 如果没有用户查询，跳过保存
+            if (userQuery == null || userQuery.trim().isEmpty()) {
+                log.debug("未找到用户查询，跳过保存推荐历史");
+                return;
+            }
+            
+            // 检查是否应该保存（避免重复保存）
+            // 如果用户查询太短或只是追问，可能不需要保存
+            if (userQuery.length() < 2) {
+                log.debug("用户查询太短，跳过保存: query={}", userQuery);
+                return;
+            }
+            
+            // 提取推荐的产品ID列表（只从产品相关的工具中提取）
+            List<Long> productIds = extractProductIds(toolResults);
+            
+            // 如果既没有产品推荐，也没有有意义的回复，跳过保存
+            if (productIds.isEmpty() && (aiResponse == null || aiResponse.trim().isEmpty() || aiResponse.length() < 10)) {
+                log.debug("没有产品推荐且回复内容为空或太短，跳过保存");
+                return;
+            }
+            
+            // 构建上下文信息（包含最近几轮对话的摘要）
+            String contextInfo = buildContextInfo(context);
+            
+            // 使用一致性服务保存推荐历史（确保Redis和数据库的一致性）
+            if (consistencyService != null) {
+                // 异步保存，但会建立Redis会话和数据库记录的关联
+                final String finalUserQuery = userQuery;
+                final String finalAiResponse = aiResponse != null ? aiResponse : "";
+                final List<Long> finalProductIds = new ArrayList<>(productIds);
+                final ConversationContext finalContext = context;
+                
+                CompletableFuture.runAsync(() -> {
+                    try {
+                        Long recommendationId = consistencyService.saveRecommendationWithConsistency(
+                            finalContext, finalUserQuery, finalAiResponse, finalProductIds);
+                        if (recommendationId != null) {
+                            log.info("✅ 推荐历史已保存并建立关联: recommendationId={}, sessionId={}, productCount={}", 
+                                recommendationId, finalContext.getSessionId(), finalProductIds.size());
+                        }
+                    } catch (Exception e) {
+                        log.error("❌ 保存推荐历史失败: userId={}, sessionId={}", 
+                            finalContext.getUserId(), finalContext.getSessionId(), e);
+                    }
+                });
+            } else {
+                // 降级方案：使用原来的保存逻辑
+                final String finalUserQuery = userQuery;
+                final String finalAiResponse = aiResponse != null ? aiResponse : "";
+                final String finalContextInfo = contextInfo;
+                final Long finalUserId = context.getUserId();
+                final String finalSessionId = context.getSessionId();
+                final List<Long> finalProductIds = new ArrayList<>(productIds);
+                
+                CompletableFuture.runAsync(() -> {
+                    try {
+                        if (aiRecommendationMapper != null) {
+                            AiRecommendation recommendation = new AiRecommendation();
+                            recommendation.setUserId(finalUserId);
+                            recommendation.setQuery(finalUserQuery);
+                            recommendation.setContext(finalContextInfo);
+                            recommendation.setResponse(finalAiResponse);
+                            recommendation.setRecommendedProducts(JSON.toJSONString(finalProductIds));
+                            recommendation.setFeedback(null);
+                            
+                            aiRecommendationMapper.insert(recommendation);
+                            log.info("✅ 推荐历史已保存到数据库: recommendationId={}, userId={}, query={}, productCount={}", 
+                                recommendation.getId(), finalUserId, finalUserQuery, finalProductIds.size());
+                        }
+                    } catch (Exception e) {
+                        log.error("❌ 异步保存推荐历史失败: userId={}, sessionId={}", 
+                            finalUserId, finalSessionId, e);
+                    }
+                });
+            }
+            
+        } catch (Exception e) {
+            // 保存失败不影响主流程，只记录日志
+            log.error("❌ 保存推荐历史失败（非关键错误，继续处理）: userId={}, sessionId={}", 
+                context.getUserId(), context.getSessionId(), e);
+        }
     }
     
     /**
-     * 清理过期会话
+     * 从工具结果中提取产品ID列表
+     * 只从产品相关的工具中提取，忽略分类工具和MCP工具
+     * 
+     * @param toolResults 工具执行结果列表
+     * @return 产品ID列表
      */
-    private void cleanupExpiredSessions() {
-        int removedCount = 0;
-        List<String> expiredSessionIds = new ArrayList<>();
+    private List<Long> extractProductIds(List<ToolResult> toolResults) {
+        List<Long> productIds = new ArrayList<>();
         
-        for (Map.Entry<String, ConversationContext> entry : sessions.entrySet()) {
-            if (isSessionExpired(entry.getValue())) {
-                expiredSessionIds.add(entry.getKey());
+        if (toolResults == null || toolResults.isEmpty()) {
+            return productIds;
+        }
+        
+        // 需要从上下文变量中获取工具名称，因为ToolResult中没有工具名称
+        // 这里我们通过检查数据结构来判断是否是产品数据
+        for (ToolResult result : toolResults) {
+            if (!result.isSuccess() || result.getData() == null) {
+                continue;
+            }
+            
+            // 处理List类型（产品列表）
+            if (result.getData() instanceof List) {
+                List<?> dataList = (List<?>) result.getData();
+                for (Object item : dataList) {
+                    if (item instanceof Map) {
+                        Map<?, ?> product = (Map<?, ?>) item;
+                        // 检查是否包含产品特征字段（title、price等），排除分类数据
+                        if (product.containsKey("title") || product.containsKey("price")) {
+                            Object id = product.get("id");
+                            if (id != null) {
+                                try {
+                                    Long productId = id instanceof Number 
+                                        ? ((Number) id).longValue() 
+                                        : Long.parseLong(id.toString());
+                                    if (!productIds.contains(productId)) {
+                                        productIds.add(productId);
+                                    }
+                                } catch (NumberFormatException e) {
+                                    log.debug("无法解析产品ID: {}", id);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            // 处理Map类型（单个产品详情）
+            else if (result.getData() instanceof Map) {
+                Map<?, ?> product = (Map<?, ?>) result.getData();
+                // 检查是否包含产品特征字段
+                if (product.containsKey("title") || product.containsKey("price")) {
+                    Object id = product.get("id");
+                    if (id != null) {
+                        try {
+                            Long productId = id instanceof Number 
+                                ? ((Number) id).longValue() 
+                                : Long.parseLong(id.toString());
+                            if (!productIds.contains(productId)) {
+                                productIds.add(productId);
+                            }
+                        } catch (NumberFormatException e) {
+                            log.debug("无法解析产品ID: {}", id);
+                        }
+                    }
+                }
             }
         }
         
-        for (String sessionId : expiredSessionIds) {
-            sessions.remove(sessionId);
-            removedCount++;
-        }
-        
-        if (removedCount > 0) {
-            log.info("🗑️ 清理了{}个过期会话，当前活跃会话数：{}", removedCount, sessions.size());
-        }
+        return productIds;
     }
     
     /**
-     * 检查会话是否过期
+     * 构建上下文信息
+     * 
+     * @param context 会话上下文
+     * @return 上下文信息字符串
      */
-    private boolean isSessionExpired(ConversationContext context) {
-        if (context.getLastActiveTime() == null) {
-            return true;
+    private String buildContextInfo(ConversationContext context) {
+        StringBuilder contextInfo = new StringBuilder();
+        contextInfo.append("会话ID: ").append(context.getSessionId());
+        
+        // 如果有历史对话，添加最近几轮对话的摘要
+        if (context.getHistory() != null && context.getHistory().size() > 2) {
+            int messageCount = context.getHistory().size();
+            contextInfo.append(", 对话轮数: ").append(messageCount / 2);
         }
         
-        long inactiveTime = java.time.Duration.between(
-            context.getLastActiveTime(), 
-            LocalDateTime.now()
-        ).toMillis();
-        
-        return inactiveTime > SESSION_TIMEOUT_MILLIS;
+        return contextInfo.toString();
     }
+    
 }
 

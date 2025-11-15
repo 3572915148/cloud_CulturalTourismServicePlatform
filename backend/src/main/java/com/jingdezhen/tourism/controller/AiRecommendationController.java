@@ -3,6 +3,8 @@ package com.jingdezhen.tourism.controller;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.jingdezhen.tourism.dto.AiRecommendationRequestDTO;
 import com.jingdezhen.tourism.dto.AiRecommendationResponseDTO;
+import com.jingdezhen.tourism.agent.core.ConversationContext;
+import com.jingdezhen.tourism.service.AgentService;
 import com.jingdezhen.tourism.service.AiRecommendationService;
 import com.jingdezhen.tourism.vo.AiRecommendationVO;
 import com.jingdezhen.tourism.vo.Result;
@@ -18,6 +20,9 @@ import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotNull;
 import com.jingdezhen.tourism.utils.TokenUtil;
 
+import java.util.HashMap;
+import java.util.Map;
+
 /**
  * AI推荐控制器
  */
@@ -29,6 +34,7 @@ import com.jingdezhen.tourism.utils.TokenUtil;
 public class AiRecommendationController {
 
     private final AiRecommendationService aiRecommendationService;
+    private final AgentService agentService;
     private final TokenUtil tokenUtil;
 
     /**
@@ -114,6 +120,37 @@ public class AiRecommendationController {
         Object stats = aiRecommendationService.getRecommendationStats(userId);
         
         return Result.success(stats);
+    }
+    
+    /**
+     * 根据推荐记录ID恢复会话（缓存回填策略）
+     * 先从Redis查找，如果不存在则从数据库恢复并保存到Redis
+     */
+    @PostMapping("/restore-session")
+    public Result<Map<String, Object>> restoreSession(
+            @RequestParam @NotNull Long recommendationId,
+            HttpServletRequest httpRequest) {
+        
+        Long userId = getUserIdFromRequest(httpRequest);
+        log.info("用户 {} 请求恢复会话: recommendationId={}", userId, recommendationId);
+        
+        ConversationContext context = agentService.restoreSessionByRecommendationId(recommendationId, userId);
+        
+        if (context == null) {
+            return Result.error("恢复会话失败：推荐记录不存在或不属于当前用户");
+        }
+        
+        // 构建返回数据
+        Map<String, Object> result = new HashMap<>();
+        result.put("sessionId", context.getSessionId());
+        result.put("userId", context.getUserId());
+        result.put("messageCount", context.getHistory() != null ? context.getHistory().size() : 0);
+        result.put("createTime", context.getCreateTime());
+        result.put("lastActiveTime", context.getLastActiveTime());
+        
+        log.info("✅ 会话恢复成功: recommendationId={}, sessionId={}", recommendationId, context.getSessionId());
+        
+        return Result.success(result);
     }
 
     /**

@@ -46,5 +46,15 @@ public interface AgentService {
      * @return 工具列表
      */
     List<Map<String, Object>> getAvailableTools();
+    
+    /**
+     * 根据推荐记录ID恢复会话（缓存回填策略）
+     * 先从Redis查找，如果不存在则从数据库恢复并保存到Redis
+     * 
+     * @param recommendationId 推荐记录ID
+     * @param userId 用户ID
+     * @return 会话上下文，如果恢复失败返回null
+     */
+    ConversationContext restoreSessionByRecommendationId(Long recommendationId, Long userId);
 }
 

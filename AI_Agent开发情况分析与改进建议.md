@@ -235,47 +235,66 @@ private String buildSystemPrompt() {
 
 ---
 
-#### 2. 会话管理使用内存存储
+#### 2. 会话管理使用内存存储 ✅ **已完成**
 **问题**：
 - 使用`ConcurrentHashMap`在内存中存储会话
 - 服务器重启后会话丢失
 - 无法支持分布式部署
 - 内存泄漏风险（虽然有定时清理）
 
-**改进建议**：
+**实现方案**：
+- ✅ 已创建`RedisSessionManager`服务类，实现Redis会话管理
+- ✅ 已启用Redis依赖和配置
+- ✅ 已修改`AgentServiceImpl`使用Redis存储会话
+- ✅ 支持自动过期（30分钟）
+- ✅ 支持分布式部署
+- ✅ 每次访问自动刷新过期时间
+
+**实现细节**：
 ```java
-// 实现Redis会话管理
+// RedisSessionManager.java - 完整的Redis会话管理实现
 @Service
 public class RedisSessionManager {
-    
     @Autowired
     private StringRedisTemplate redisTemplate;
     
     private static final String SESSION_PREFIX = "agent:session:";
-    private static final long SESSION_TIMEOUT = 30 * 60; // 30分钟
+    private static final long SESSION_TIMEOUT_SECONDS = 30 * 60; // 30分钟
     
-    public void saveSession(String sessionId, ConversationContext context) {
-        String key = SESSION_PREFIX + sessionId;
-        String value = JSON.toJSONString(context);
-        redisTemplate.opsForValue().set(key, value, SESSION_TIMEOUT, TimeUnit.SECONDS);
-    }
+    // 保存会话（自动设置过期时间）
+    public void saveSession(String sessionId, ConversationContext context);
     
-    public ConversationContext getSession(String sessionId) {
-        String key = SESSION_PREFIX + sessionId;
-        String value = redisTemplate.opsForValue().get(key);
-        if (value == null) return null;
-        return JSON.parseObject(value, ConversationContext.class);
-    }
+    // 获取会话（自动刷新过期时间）
+    public ConversationContext getSession(String sessionId);
+    
+    // 删除会话
+    public void deleteSession(String sessionId);
+    
+    // 其他辅助方法：exists、refreshSession、getSessionTtl
 }
 ```
 
-**依赖添加**：
-```xml
-<dependency>
-    <groupId>org.springframework.boot</groupId>
-    <artifactId>spring-boot-starter-data-redis</artifactId>
-</dependency>
-```
+**代码位置**：
+- `backend/src/main/java/com/jingdezhen/tourism/service/RedisSessionManager.java`
+- `backend/src/main/java/com/jingdezhen/tourism/service/impl/AgentServiceImpl.java`（已更新）
+
+**配置**：
+- Redis依赖已启用：`spring-boot-starter-data-redis`
+- Redis配置已启用：`application.yml`中的`spring.data.redis`配置
+
+**使用说明**：
+1. **确保Redis服务运行**：在启动应用前，确保Redis服务已启动（默认端口6379）
+2. **配置Redis连接**：在`application.yml`中配置Redis连接信息（host、port、password等）
+3. **自动过期**：会话在30分钟无活动后自动过期，Redis会自动清理
+4. **分布式支持**：多个应用实例可以共享同一个Redis，实现会话共享
+5. **性能优化**：每次访问会话时自动刷新过期时间，活跃会话不会过期
+
+**优势**：
+- ✅ 支持分布式部署，多实例共享会话
+- ✅ 服务器重启后会话不丢失（Redis持久化）
+- ✅ 自动过期清理，无需手动管理
+- ✅ 访问时自动刷新过期时间，提升用户体验
+- ✅ 内存占用更可控，Redis统一管理
 
 ---
 
@@ -689,12 +708,12 @@ public class OpenApiConfig {
 
 ## 📈 改进优先级和时间估算
 
-| 优先级 | 改进项 | 预计工作量 | 重要性 | 紧急性 |
-|-------|-------|----------|--------|--------|
-| 🔴 高 | 优化系统提示词 | 4小时 | ⭐⭐⭐⭐⭐ | 高 |
-| 🔴 高 | Redis会话管理 | 6小时 | ⭐⭐⭐⭐⭐ | 高 |
-| 🔴 高 | API限流保护 | 4小时 | ⭐⭐⭐⭐⭐ | 高 |
-| 🔴 高 | 数据库索引优化 | 2小时 | ⭐⭐⭐⭐ | 高 |
+| 优先级 | 改进项 | 预计工作量 | 重要性 | 紧急性 | 状态 |
+|-------|-------|----------|--------|--------|------|
+| 🔴 高 | 优化系统提示词 | 4小时 | ⭐⭐⭐⭐⭐ | 高 | ⏳ 待实施 |
+| 🔴 高 | Redis会话管理 | 6小时 | ⭐⭐⭐⭐⭐ | 高 | ✅ **已完成** |
+| 🔴 高 | API限流保护 | 4小时 | ⭐⭐⭐⭐⭐ | 高 | ⏳ 待实施 |
+| 🔴 高 | 数据库索引优化 | 2小时 | ⭐⭐⭐⭐ | 高 | ⏳ 待实施 |
 | 🟡 中 | 单元测试 | 16小时 | ⭐⭐⭐⭐ | 中 |
 | 🟡 中 | 监控和指标 | 8小时 | ⭐⭐⭐⭐ | 中 |
 | 🟡 中 | Swagger文档 | 4小时 | ⭐⭐⭐ | 中 |
@@ -707,10 +726,10 @@ public class OpenApiConfig {
 ## 🎯 推荐的实施路线图
 
 ### **第一阶段（高优先级，2天）**
-1. ✅ 优化系统提示词（降低成本）
-2. ✅ 实现Redis会话管理（支持分布式）
-3. ✅ 添加API限流保护（防止滥用）
-4. ✅ 优化数据库索引（提升性能）
+1. ⏳ 优化系统提示词（降低成本）
+2. ✅ **Redis会话管理**（支持分布式）**已完成**
+3. ⏳ 添加API限流保护（防止滥用）
+4. ⏳ 优化数据库索引（提升性能）
 
 ### **第二阶段（中优先级，3天）**
 1. ✅ 添加单元测试（保证质量）
@@ -757,7 +776,7 @@ public class OpenApiConfig {
 - ✅ 用户体验好（流式响应、产品卡片）
 
 **需要改进**：
-- ⚠️ 性能和成本优化（提示词、会话、缓存）
+- ⚠️ 性能和成本优化（提示词、缓存）✅ 会话管理已完成
 - ⚠️ 生产环境准备（限流、监控、测试）
 - ⚠️ 可维护性提升（文档、日志、配置）
 

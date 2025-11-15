@@ -27,9 +27,9 @@
       <div v-if="showHistory" class="history-sidebar">
         <div class="sidebar-header">
           <h4>推荐历史</h4>
-          <el-button @click="loadHistory" size="small" :loading="historyLoading">
-            刷新
-          </el-button>
+        <el-button @click="handleRefreshHistory" size="small" :loading="historyLoading">
+          刷新
+        </el-button>
         </div>
         <div class="history-list">
           <div 
@@ -222,7 +222,7 @@ import { ref, reactive, onMounted, onUnmounted, nextTick, defineOptions, watch }
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { ChatDotRound, User, Check, Close, Plus } from '@element-plus/icons-vue'
-import { getAiRecommendation, getAiRecommendationStream, getRecommendationHistory, submitFeedback as submitFeedbackApi } from '@/api/ai'
+import { getAiRecommendation, getAiRecommendationStream, getRecommendationHistory, submitFeedback as submitFeedbackApi, restoreSession as restoreSessionApi } from '@/api/ai'
 import { useUserStore } from '@/stores/user'
 
 // 定义组件名称，用于keep-alive缓存
@@ -400,6 +400,7 @@ const loadHistory = async () => {
       size: 20
     })
     historyList.value = response.data.records
+    console.log('历史记录已加载，共', historyList.value.length, '条')
   } catch (error) {
     console.error('加载历史记录失败:', error)
     ElMessage.error('加载历史记录失败')
@@ -408,27 +409,72 @@ const loadHistory = async () => {
   }
 }
 
+// 处理刷新历史记录按钮点击
+const handleRefreshHistory = () => {
+  // 如果历史记录侧边栏未显示，先显示它
+  if (!showHistory.value) {
+    showHistory.value = true
+  }
+  // 加载历史记录
+  loadHistory()
+}
+
 // 加载历史记录项
-const loadHistoryItem = (item) => {
-  messages.value = [
-    {
-      id: item.id,
-      type: 'user',
-      content: item.query,
-      time: new Date(item.createTime)
-    },
-    {
-      id: item.id + 1,
-      type: 'ai',
-      content: item.response,
-      recommendedProducts: item.recommendedProducts,
-      recommendationId: item.id,
-      feedback: item.feedback,
-      time: new Date(item.createTime)
+const loadHistoryItem = async (item) => {
+  try {
+    // 先从Redis查找，如果不存在则从数据库恢复并保存到Redis
+    const response = await restoreSessionApi(item.id)
+    if (response.code === 200 && response.data) {
+      // 恢复会话成功，保存sessionId到localStorage，这样后续对话会使用这个会话
+      localStorage.setItem('agent_session_id', response.data.sessionId)
+      ElMessage.success('会话已恢复')
     }
-  ]
-  showHistory.value = false
-  scrollToBottom()
+    
+    // 显示历史记录的消息
+    messages.value = [
+      {
+        id: item.id,
+        type: 'user',
+        content: item.query,
+        time: new Date(item.createTime)
+      },
+      {
+        id: item.id + 1,
+        type: 'ai',
+        content: item.response,
+        recommendedProducts: item.recommendedProducts,
+        recommendationId: item.id,
+        feedback: item.feedback,
+        time: new Date(item.createTime)
+      }
+    ]
+    showHistory.value = false
+    scrollToBottom()
+  } catch (error) {
+    console.error('恢复会话失败:', error)
+    ElMessage.warning('恢复会话失败，将仅显示历史消息')
+    
+    // 即使恢复失败，也显示历史消息
+    messages.value = [
+      {
+        id: item.id,
+        type: 'user',
+        content: item.query,
+        time: new Date(item.createTime)
+      },
+      {
+        id: item.id + 1,
+        type: 'ai',
+        content: item.response,
+        recommendedProducts: item.recommendedProducts,
+        recommendationId: item.id,
+        feedback: item.feedback,
+        time: new Date(item.createTime)
+      }
+    ]
+    showHistory.value = false
+    scrollToBottom()
+  }
 }
 
 // 提交反馈
@@ -730,6 +776,10 @@ const simulateStreamingResponse = async (aiMessage, query) => {
           // 清理停止函数引用
           currentStreamStop = null
           
+          // AI回复完成后，自动刷新历史记录（无论侧边栏是否显示）
+          // 这样当用户打开历史记录时，就能看到最新的记录
+          loadHistory()
+          
           // 使用Vue的响应式更新
           const messageIndex = messages.value.findIndex(m => m.id === aiMessage.id)
           if (messageIndex !== -1) {
@@ -1013,8 +1063,10 @@ const startNewChat = () => {
   messages.value = []
   inputMessage.value = ''
   showHistory.value = false
-  // 清除保存的会话
+  // 清除保存的会话（前端消息）
   localStorage.removeItem(CHAT_SESSION_KEY)
+  // 清除后端会话ID，这样下次发送消息时会生成新的sessionId
+  localStorage.removeItem('agent_session_id')
   ElMessage.success('已开始新会话')
 }
 
@@ -1030,8 +1082,8 @@ onMounted(() => {
   // 恢复上次会话（如果存在）
   restoreSession()
   
-  // 加载历史记录
-  loadHistory()
+  // 不自动加载历史记录，只有在用户点击刷新按钮时才加载
+  // loadHistory()
 })
 </script>
 
