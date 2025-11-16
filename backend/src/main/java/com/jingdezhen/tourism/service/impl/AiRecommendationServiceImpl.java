@@ -16,7 +16,10 @@ import com.jingdezhen.tourism.vo.AiRecommendationVO;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.BeanUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
@@ -31,6 +34,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.*;
+import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
 
 /**
@@ -44,6 +48,14 @@ public class AiRecommendationServiceImpl implements AiRecommendationService {
     private final AiRecommendationMapper aiRecommendationMapper;
     private final ProductMapper productMapper;
     private final ObjectMapper objectMapper;
+    
+    @Autowired(required = false)
+    @Qualifier("aiStreamExecutor")
+    private ThreadPoolTaskExecutor aiStreamExecutor;
+    
+    @Autowired(required = false)
+    @Qualifier("productQueryExecutor")
+    private ThreadPoolTaskExecutor productQueryExecutor;
 
     // DeepSeek API配置
     private static final String DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions";
@@ -433,31 +445,58 @@ public class AiRecommendationServiceImpl implements AiRecommendationService {
 
     /**
      * 构建推荐产品DTO列表
+     * 优化：使用线程池并行查询产品详情，提升性能
      */
     private List<AiRecommendationResponseDTO.RecommendedProductDTO> buildRecommendedProducts(
             List<Long> productIds, String aiResponse) {
         
-        return productIds.stream().map(id -> {
-            Product product = productMapper.selectById(id);
-            if (product == null) {
-                return null;
-            }
-            
-            AiRecommendationResponseDTO.RecommendedProductDTO dto = 
-                new AiRecommendationResponseDTO.RecommendedProductDTO();
-            dto.setId(product.getId());
-            dto.setTitle(product.getTitle());
-            dto.setDescription(product.getDescription());
-            dto.setCoverImage(product.getCoverImage());
-            dto.setPrice(product.getPrice().toString());
-            dto.setRegion(product.getRegion());
-            dto.setAddress(product.getAddress());
-            dto.setRating(product.getRating() != null ? product.getRating().doubleValue() : 0.0);
-            dto.setTags(product.getTags());
-            dto.setReason(extractProductReason(aiResponse, product.getTitle()));
-            
-            return dto;
-        }).filter(Objects::nonNull).collect(Collectors.toList());
+        // 如果只有一个产品或线程池未配置，使用串行查询
+        if (productQueryExecutor == null || productIds.size() <= 1) {
+            return productIds.stream().map(id -> {
+                Product product = productMapper.selectById(id);
+                if (product == null) {
+                    return null;
+                }
+                return convertToRecommendedProductDTO(product, aiResponse);
+            }).filter(Objects::nonNull).collect(Collectors.toList());
+        }
+        
+        // 并行查询产品详情
+        List<CompletableFuture<AiRecommendationResponseDTO.RecommendedProductDTO>> futures = 
+            productIds.stream()
+                .map(id -> CompletableFuture.supplyAsync(() -> {
+                    Product product = productMapper.selectById(id);
+                    if (product == null) {
+                        return null;
+                    }
+                    return convertToRecommendedProductDTO(product, aiResponse);
+                }, productQueryExecutor))
+                .collect(Collectors.toList());
+        
+        return futures.stream()
+            .map(CompletableFuture::join)
+            .filter(Objects::nonNull)
+            .collect(Collectors.toList());
+    }
+    
+    /**
+     * 转换产品为推荐产品DTO
+     */
+    private AiRecommendationResponseDTO.RecommendedProductDTO convertToRecommendedProductDTO(
+            Product product, String aiResponse) {
+        AiRecommendationResponseDTO.RecommendedProductDTO dto = 
+            new AiRecommendationResponseDTO.RecommendedProductDTO();
+        dto.setId(product.getId());
+        dto.setTitle(product.getTitle());
+        dto.setDescription(product.getDescription());
+        dto.setCoverImage(product.getCoverImage());
+        dto.setPrice(product.getPrice().toString());
+        dto.setRegion(product.getRegion());
+        dto.setAddress(product.getAddress());
+        dto.setRating(product.getRating() != null ? product.getRating().doubleValue() : 0.0);
+        dto.setTags(product.getTags());
+        dto.setReason(extractProductReason(aiResponse, product.getTitle()));
+        return dto;
     }
 
     /**
@@ -494,27 +533,53 @@ public class AiRecommendationServiceImpl implements AiRecommendationService {
 
     /**
      * 获取产品VO列表
+     * 优化：使用线程池并行查询产品详情，提升性能
      */
     private List<AiRecommendationVO.RecommendedProductVO> getProductVOs(List<Long> productIds) {
-        return productIds.stream().map(id -> {
-            Product product = productMapper.selectById(id);
-            if (product == null) {
-                return null;
-            }
-            
-            AiRecommendationVO.RecommendedProductVO vo = new AiRecommendationVO.RecommendedProductVO();
-            vo.setId(product.getId());
-            vo.setTitle(product.getTitle());
-            vo.setDescription(product.getDescription());
-            vo.setCoverImage(product.getCoverImage());
-            vo.setPrice(product.getPrice().toString());
-            vo.setRegion(product.getRegion());
-            vo.setAddress(product.getAddress());
-            vo.setRating(product.getRating() != null ? product.getRating().doubleValue() : 0.0);
-            vo.setTags(product.getTags());
-            
-            return vo;
-        }).filter(Objects::nonNull).collect(Collectors.toList());
+        // 如果只有一个产品或线程池未配置，使用串行查询
+        if (productQueryExecutor == null || productIds.size() <= 1) {
+            return productIds.stream().map(id -> {
+                Product product = productMapper.selectById(id);
+                if (product == null) {
+                    return null;
+                }
+                return convertToRecommendedProductVO(product);
+            }).filter(Objects::nonNull).collect(Collectors.toList());
+        }
+        
+        // 并行查询产品详情
+        List<CompletableFuture<AiRecommendationVO.RecommendedProductVO>> futures = 
+            productIds.stream()
+                .map(id -> CompletableFuture.supplyAsync(() -> {
+                    Product product = productMapper.selectById(id);
+                    if (product == null) {
+                        return null;
+                    }
+                    return convertToRecommendedProductVO(product);
+                }, productQueryExecutor))
+                .collect(Collectors.toList());
+        
+        return futures.stream()
+            .map(CompletableFuture::join)
+            .filter(Objects::nonNull)
+            .collect(Collectors.toList());
+    }
+    
+    /**
+     * 转换产品为推荐产品VO
+     */
+    private AiRecommendationVO.RecommendedProductVO convertToRecommendedProductVO(Product product) {
+        AiRecommendationVO.RecommendedProductVO vo = new AiRecommendationVO.RecommendedProductVO();
+        vo.setId(product.getId());
+        vo.setTitle(product.getTitle());
+        vo.setDescription(product.getDescription());
+        vo.setCoverImage(product.getCoverImage());
+        vo.setPrice(product.getPrice().toString());
+        vo.setRegion(product.getRegion());
+        vo.setAddress(product.getAddress());
+        vo.setRating(product.getRating() != null ? product.getRating().doubleValue() : 0.0);
+        vo.setTags(product.getTags());
+        return vo;
     }
 
     @Override
@@ -548,8 +613,8 @@ public class AiRecommendationServiceImpl implements AiRecommendationService {
             // 4. 构建提示词
             String prompt = buildPrompt(request.getQuery(), context, request);
             
-            // 5. 在新线程中处理AI调用（避免阻塞主线程，但不使用@Async避免生命周期问题）
-            Thread streamThread = new Thread(() -> {
+            // 5. 使用线程池处理AI调用（避免阻塞主线程）
+            Runnable streamTask = () -> {
                 try {
                     log.info("流式推送线程开始执行");
                     
@@ -660,11 +725,19 @@ public class AiRecommendationServiceImpl implements AiRecommendationService {
                         emitter.completeWithError(e);
                     }
                 }
-            });
+            };
             
-            streamThread.setName("AI-Stream-" + userId);
-            streamThread.setDaemon(true); // 设置为守护线程，应用关闭时自动终止
-            streamThread.start();
+            // 使用线程池执行流式处理任务
+            if (aiStreamExecutor != null) {
+                aiStreamExecutor.execute(streamTask);
+            } else {
+                // 降级方案：如果线程池未配置，使用新线程
+                log.warn("⚠️ aiStreamExecutor未配置，使用新线程处理流式请求");
+                Thread streamThread = new Thread(streamTask);
+                streamThread.setName("AI-Stream-" + userId);
+                streamThread.setDaemon(true);
+                streamThread.start();
+            }
             
         } catch (Exception e) {
             log.error("流式AI推荐失败", e);

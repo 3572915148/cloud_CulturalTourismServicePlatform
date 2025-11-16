@@ -7,13 +7,16 @@ import com.jingdezhen.tourism.entity.AiRecommendation;
 import com.jingdezhen.tourism.mapper.AiRecommendationMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.stream.Collectors;
 
 /**
  * 会话一致性服务
@@ -30,6 +33,10 @@ public class SessionConsistencyService {
     
     @Autowired(required = false)
     private AiRecommendationMapper aiRecommendationMapper;
+    
+    @Autowired(required = false)
+    @Qualifier("consistencyCheckExecutor")
+    private ThreadPoolTaskExecutor consistencyCheckExecutor;
     
     
     /**
@@ -378,11 +385,36 @@ public class SessionConsistencyService {
             }
             
             // 检查每个推荐记录ID是否在数据库中存在
-            List<Long> missingIds = new ArrayList<>();
-            for (Long recommendationId : recommendationIds) {
-                AiRecommendation recommendation = aiRecommendationMapper.selectById(recommendationId);
-                if (recommendation == null) {
-                    missingIds.add(recommendationId);
+            // 优化：使用线程池并行检查，提升性能
+            List<Long> missingIds;
+            if (consistencyCheckExecutor != null && recommendationIds.size() > 1) {
+                // 并行检查（多个记录时）
+                List<CompletableFuture<Boolean>> futures = recommendationIds.stream()
+                    .map(id -> CompletableFuture.supplyAsync(() -> {
+                        AiRecommendation recommendation = aiRecommendationMapper.selectById(id);
+                        return recommendation != null;
+                    }, consistencyCheckExecutor))
+                    .collect(Collectors.toList());
+                
+                // 收集缺失的ID
+                missingIds = new ArrayList<>();
+                for (int i = 0; i < recommendationIds.size(); i++) {
+                    Boolean exists = futures.get(i).join();
+                    if (!exists) {
+                        missingIds.add(recommendationIds.get(i));
+                    }
+                }
+                
+                log.debug("✅ 并行检查数据一致性完成: 总计={}, 缺失={}", 
+                    recommendationIds.size(), missingIds.size());
+            } else {
+                // 串行检查（降级方案或单个记录时）
+                missingIds = new ArrayList<>();
+                for (Long recommendationId : recommendationIds) {
+                    AiRecommendation recommendation = aiRecommendationMapper.selectById(recommendationId);
+                    if (recommendation == null) {
+                        missingIds.add(recommendationId);
+                    }
                 }
             }
             

@@ -5,8 +5,10 @@ import com.jingdezhen.tourism.mapper.ProductMapper;
 import com.jingdezhen.tourism.utils.RedisLockUtil;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.stereotype.Service;
 
 import java.util.Collections;
@@ -30,6 +32,10 @@ public class StockService {
     
     @Autowired
     private com.jingdezhen.tourism.config.RedisConfig redisConfig;
+    
+    @Autowired
+    @Qualifier("stockAsyncExecutor")
+    private ThreadPoolTaskExecutor stockAsyncExecutor;
     
     /**
      * 获取RedisTemplate
@@ -255,10 +261,11 @@ public class StockService {
     /**
      * 异步同步库存到数据库
      * 使用分布式锁防止并发同步
+     * 优化：使用线程池替代new Thread()，提升资源利用率
      */
     private void syncStockToDBAsync(Long productId) {
-        // 使用异步方式同步，不阻塞主流程
-        new Thread(() -> {
+        // 使用线程池异步同步，不阻塞主流程
+        stockAsyncExecutor.execute(() -> {
             try {
                 StringRedisTemplate redisTemplate = getRedisTemplate();
                 if (redisTemplate == null) {
@@ -287,7 +294,7 @@ public class StockService {
             } catch (Exception e) {
                 log.error("❌ 同步库存到数据库失败: productId={}, error={}", productId, e.getMessage(), e);
             }
-        }).start();
+        });
     }
     
     /**

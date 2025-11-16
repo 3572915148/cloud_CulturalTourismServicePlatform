@@ -15,7 +15,9 @@ import com.jingdezhen.tourism.service.RedisSessionManager;
 import com.jingdezhen.tourism.service.SessionConsistencyService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
@@ -28,6 +30,7 @@ import java.net.http.HttpResponse;
 import java.time.LocalDateTime;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
+import java.util.stream.Collectors;
 
 /**
  * Agent服务实现类
@@ -48,6 +51,10 @@ public class AgentServiceImpl implements AgentService {
     
     @Autowired(required = false)
     private SessionConsistencyService consistencyService;
+    
+    @Autowired(required = false)
+    @Qualifier("agentToolExecutor")
+    private ThreadPoolTaskExecutor agentToolExecutor;
     
     /**
      * 构造函数
@@ -350,48 +357,116 @@ public class AgentServiceImpl implements AgentService {
     
     /**
      * 执行工具调用
+     * 优化：使用线程池并行执行多个工具，提升性能
      */
     private List<ToolResult> executeTools(Map<Integer, ToolCallAccumulator> toolCallsMap, 
                                           ConversationContext context, 
                                           SseEmitter emitter) throws Exception {
         
+        // 如果只有一个工具，直接执行（避免线程池开销）
+        if (toolCallsMap.size() == 1) {
+            return executeToolsSequentially(toolCallsMap, context, emitter);
+        }
+        
+        // 多个工具并行执行
+        if (agentToolExecutor != null) {
+            return executeToolsInParallel(toolCallsMap, context, emitter);
+        } else {
+            // 如果线程池未配置，降级为串行执行
+            log.warn("⚠️ agentToolExecutor未配置，使用串行执行工具");
+            return executeToolsSequentially(toolCallsMap, context, emitter);
+        }
+    }
+    
+    /**
+     * 串行执行工具（降级方案或单工具场景）
+     */
+    private List<ToolResult> executeToolsSequentially(Map<Integer, ToolCallAccumulator> toolCallsMap,
+                                                      ConversationContext context,
+                                                      SseEmitter emitter) throws Exception {
         List<ToolResult> results = new ArrayList<>();
         
         for (Map.Entry<Integer, ToolCallAccumulator> entry : toolCallsMap.entrySet()) {
-            ToolCallAccumulator accumulator = entry.getValue();
-            
-            String toolName = accumulator.functionName;
-            String argsStr = accumulator.arguments.toString();
-            
-            if (toolName == null || argsStr == null || argsStr.isEmpty()) {
-                log.warn("⚠️ 工具调用信息不完整: name={}, args={}", toolName, argsStr);
-                continue;
+            ToolResult result = executeSingleTool(entry, context, emitter);
+            if (result != null) {
+                results.add(result);
             }
+        }
+        
+        return results;
+    }
+    
+    /**
+     * 并行执行工具
+     */
+    private List<ToolResult> executeToolsInParallel(Map<Integer, ToolCallAccumulator> toolCallsMap,
+                                                    ConversationContext context,
+                                                    SseEmitter emitter) throws Exception {
+        // 并行执行所有工具
+        List<CompletableFuture<ToolResult>> futures = toolCallsMap.entrySet().stream()
+            .map(entry -> CompletableFuture.supplyAsync(() -> {
+                try {
+                    return executeSingleTool(entry, context, emitter);
+                } catch (Exception e) {
+                    log.error("❌ 工具执行异常: {}", entry.getKey(), e);
+                    return ToolResult.error("工具执行异常: " + e.getMessage(), "TOOL_EXECUTION_ERROR");
+                }
+            }, agentToolExecutor))
+            .collect(Collectors.toList());
+        
+        // 等待所有工具执行完成
+        List<ToolResult> results = futures.stream()
+            .map(CompletableFuture::join)
+            .filter(result -> result != null)
+            .collect(Collectors.toList());
+        
+        log.info("✅ 并行执行工具完成: 共{}个工具，成功{}个", 
+            toolCallsMap.size(), results.size());
+        
+        return results;
+    }
+    
+    /**
+     * 执行单个工具
+     */
+    private ToolResult executeSingleTool(Map.Entry<Integer, ToolCallAccumulator> entry,
+                                        ConversationContext context,
+                                        SseEmitter emitter) {
+        ToolCallAccumulator accumulator = entry.getValue();
+        String toolName = accumulator.functionName;
+        String argsStr = accumulator.arguments.toString();
+        
+        if (toolName == null || argsStr == null || argsStr.isEmpty()) {
+            log.warn("⚠️ 工具调用信息不完整: name={}, args={}", toolName, argsStr);
+            return null;
+        }
+        
+        log.info("🔧 AI请求调用工具: {}, 参数: {}", toolName, argsStr);
+        
+        try {
+            Map<String, Object> args = JSON.parseObject(argsStr, 
+                new TypeReference<Map<String, Object>>() {});
             
-            log.info("🔧 AI请求调用工具: {}, 参数: {}", toolName, argsStr);
+            // 通知前端正在调用工具
+            Map<String, Object> toolCallInfo = new HashMap<>();
+            toolCallInfo.put("tool", toolName);
+            toolCallInfo.put("parameters", args);
             
-            try {
-                Map<String, Object> args = JSON.parseObject(argsStr, 
-                    new TypeReference<Map<String, Object>>() {});
-                
-                // 通知前端正在调用工具
-                Map<String, Object> toolCallInfo = new HashMap<>();
-                toolCallInfo.put("tool", toolName);
-                toolCallInfo.put("parameters", args);
-                
+            synchronized (emitter) {
                 emitter.send(SseEmitter.event()
                     .name("tool_call")
                     .data(JSON.toJSONString(toolCallInfo)));
+            }
+            
+            // 执行工具
+            AgentTool tool = toolRegistry.getTool(toolName);
+            if (tool != null) {
+                ToolResult result = tool.execute(args, context.getUserId());
                 
-                // 执行工具
-                AgentTool tool = toolRegistry.getTool(toolName);
-                if (tool != null) {
-                    ToolResult result = tool.execute(args, context.getUserId());
-                    results.add(result);
-                    
-                    // 通知前端工具执行结果
-                    // 注意：只发送产品相关的工具结果，分类工具结果不发送（避免前端误判为产品）
-                    // 分类信息只用于AI内部决策，不需要发送给前端
+                // 通知前端工具执行结果
+                // 注意：只发送产品相关的工具结果，分类工具结果不发送（避免前端误判为产品）
+                // 分类信息只用于AI内部决策，不需要发送给前端
+                synchronized (emitter) {
                     if (!"get_product_categories".equals(toolName)) {
                         emitter.send(SseEmitter.event()
                             .name("tool_result")
@@ -399,29 +474,38 @@ public class AgentServiceImpl implements AgentService {
                     } else {
                         log.info("跳过发送分类工具结果到前端（分类不是产品数据）");
                     }
-                    
-                    log.info("✅ 工具执行成功: {}", toolName);
-                } else {
-                    log.error("⚠️ 工具不存在: {}", toolName);
-                    ToolResult errorResult = ToolResult.error("工具不存在：" + toolName, "TOOL_NOT_FOUND");
-                    results.add(errorResult);
-                    
+                }
+                
+                log.info("✅ 工具执行成功: {}", toolName);
+                return result;
+            } else {
+                log.error("⚠️ 工具不存在: {}", toolName);
+                ToolResult errorResult = ToolResult.error("工具不存在：" + toolName, "TOOL_NOT_FOUND");
+                
+                synchronized (emitter) {
                     emitter.send(SseEmitter.event()
                         .name("tool_result")
                         .data(JSON.toJSONString(errorResult)));
                 }
-            } catch (Exception e) {
-                log.error("❌ 工具执行失败: {}", toolName, e);
-                ToolResult errorResult = ToolResult.error("工具执行失败：" + e.getMessage(), "TOOL_EXECUTION_ERROR");
-                results.add(errorResult);
                 
-                emitter.send(SseEmitter.event()
-                    .name("tool_result")
-                    .data(JSON.toJSONString(errorResult)));
+                return errorResult;
             }
+        } catch (Exception e) {
+            log.error("❌ 工具执行失败: {}", toolName, e);
+            ToolResult errorResult = ToolResult.error("工具执行失败：" + e.getMessage(), "TOOL_EXECUTION_ERROR");
+            
+            try {
+                synchronized (emitter) {
+                    emitter.send(SseEmitter.event()
+                        .name("tool_result")
+                        .data(JSON.toJSONString(errorResult)));
+                }
+            } catch (Exception ex) {
+                log.error("发送工具错误结果失败", ex);
+            }
+            
+            return errorResult;
         }
-        
-        return results;
     }
     
     /**
