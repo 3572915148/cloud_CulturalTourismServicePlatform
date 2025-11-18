@@ -24,6 +24,7 @@
         <jwt.version>0.11.5</jwt.version>
         <fastjson.version>2.0.43</fastjson.version>
         <spring-ai.version>0.8.1</spring-ai.version>
+        <langchain4j.version>0.36.2</langchain4j.version>
     </properties>
 
     <repositories>
@@ -56,14 +57,19 @@
             <artifactId>spring-boot-starter-security</artifactId>
         </dependency>
 
-        <!-- Spring AI：AI集成功能（暂时注释，等需要时再启用） -->
-        <!--
+        <!-- LangChain4j：强大的 LLM 应用开发框架 -->
         <dependency>
-            <groupId>org.springframework.ai</groupId>
-            <artifactId>spring-ai-openai-spring-boot-starter</artifactId>
-            <version>${spring-ai.version}</version>
+            <groupId>dev.langchain4j</groupId>
+            <artifactId>langchain4j</artifactId>
+            <version>${langchain4j.version}</version>
         </dependency>
-        -->
+        
+        <!-- LangChain4j OpenAI 支持（兼容 DeepSeek 等 OpenAI API 兼容模型） -->
+        <dependency>
+            <groupId>dev.langchain4j</groupId>
+            <artifactId>langchain4j-open-ai</artifactId>
+            <version>${langchain4j.version}</version>
+        </dependency>
 
         <dependency>
             <groupId>io.swagger.core.v3</groupId>
@@ -130,12 +136,12 @@
         </dependency>
 
         <!-- Spring Boot DevTools：热部署 -->
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-devtools</artifactId>
-            <scope>runtime</scope>
-            <optional>true</optional>
-        </dependency>
+<!--        <dependency>-->
+<!--            <groupId>org.springframework.boot</groupId>-->
+<!--            <artifactId>spring-boot-devtools</artifactId>-->
+<!--            <scope>runtime</scope>-->
+<!--            <optional>true</optional>-->
+<!--        </dependency>-->
 
         <!-- Spring Boot Configuration Processor -->
         <dependency>

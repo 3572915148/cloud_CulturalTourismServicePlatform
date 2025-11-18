@@ -30,7 +30,7 @@ export function getAiRecommendationStream(data, callbacks) {
     message: data.query || data.message || ''
   }
   
-  console.log('发起Agent流式请求:', `${baseURL}/agent/chat/stream`, requestData)
+  console.log('发起LangChain Agent流式请求:', `${baseURL}/langchain/agent/chat/stream`, requestData)
   
   let hasCompleted = false  // 标记是否已完成
   let isUserStopped = false  // 标记是否是用户主动停止
@@ -89,7 +89,7 @@ export function getAiRecommendationStream(data, callbacks) {
   }
   
   // 异步处理fetch，但不阻塞返回
-  fetch(`${baseURL}/agent/chat/stream`, {
+  fetch(`${baseURL}/langchain/agent/chat/stream`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
