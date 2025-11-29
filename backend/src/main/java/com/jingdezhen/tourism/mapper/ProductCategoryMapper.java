@@ -2,7 +2,6 @@ package com.jingdezhen.tourism.mapper;
 
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.jingdezhen.tourism.entity.ProductCategory;
-import org.apache.ibatis.annotations.Mapper;
 
 import java.util.List;
 import java.util.Map;
@@ -11,7 +10,6 @@ import java.util.Map;
  * 产品分类Mapper
  * SQL语句定义在 ProductCategoryMapper.xml 中
  */
-@Mapper
 public interface ProductCategoryMapper extends BaseMapper<ProductCategory> {
     
     /**

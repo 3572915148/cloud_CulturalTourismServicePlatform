@@ -112,32 +112,13 @@ public class UserServiceImpl implements UserService {
         }
 
         // 更新用户信息
-        if (StringUtils.hasText(dto.getNickname())) {
-            user.setNickname(dto.getNickname());
-        }
-        if (StringUtils.hasText(dto.getEmail())) {
-            user.setEmail(dto.getEmail());
-        }
-        if (StringUtils.hasText(dto.getPhone())) {
-            user.setPhone(dto.getPhone());
-        }
-        if (StringUtils.hasText(dto.getAvatar())) {
-            user.setAvatar(dto.getAvatar());
-        }
-        if (dto.getGender() != null) {
-            user.setGender(dto.getGender());
-        }
-        if (StringUtils.hasText(dto.getBirthday())) {
-            try {
-                DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd");
-                user.setBirthday(LocalDate.parse(dto.getBirthday(), formatter));
-            } catch (Exception e) {
-                throw new BusinessException("生日格式不正确，请使用yyyy-MM-dd格式");
-            }
-        }
-        if (StringUtils.hasText(dto.getIntroduction())) {
-            user.setIntroduction(dto.getIntroduction());
-        }
+        updateIfPresent(dto.getNickname(), user::setNickname);
+        updateIfPresent(dto.getEmail(), user::setEmail);
+        updateIfPresent(dto.getPhone(), user::setPhone);
+        updateIfPresent(dto.getAvatar(), user::setAvatar);
+        updateIfPresent(dto.getIntroduction(), user::setIntroduction);
+        updateIfPresent(dto.getGender(), user::setGender);
+        updateBirthdayIfPresent(dto.getBirthday(), user);
 
         // 保存更新
         userMapper.updateById(user);
@@ -146,6 +127,39 @@ public class UserServiceImpl implements UserService {
         UserVO userVO = new UserVO();
         BeanUtils.copyProperties(user, userVO);
         return userVO;
+    }
+
+    /**
+     * 如果值不为空，则更新字段
+     */
+    private void updateIfPresent(String value, java.util.function.Consumer<String> setter) {
+        if (StringUtils.hasText(value)) {
+            setter.accept(value);
+        }
+    }
+
+    /**
+     * 如果值不为空，则更新字段（Integer类型）
+     */
+    private void updateIfPresent(Integer value, java.util.function.Consumer<Integer> setter) {
+        if (value != null) {
+            setter.accept(value);
+        }
+    }
+
+    /**
+     * 如果生日不为空，则解析并更新
+     */
+    private void updateBirthdayIfPresent(String birthday, User user) {
+        if (!StringUtils.hasText(birthday)) {
+            return;
+        }
+        try {
+            DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd");
+            user.setBirthday(LocalDate.parse(birthday, formatter));
+        } catch (Exception e) {
+            throw new BusinessException("生日格式不正确，请使用yyyy-MM-dd格式");
+        }
     }
 
     @Override

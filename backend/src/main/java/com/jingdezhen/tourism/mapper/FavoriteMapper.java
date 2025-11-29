@@ -2,14 +2,12 @@ package com.jingdezhen.tourism.mapper;
 
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.jingdezhen.tourism.entity.Favorite;
-import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 
 /**
  * 收藏Mapper
  * SQL语句定义在 FavoriteMapper.xml 中
  */
-@Mapper
 public interface FavoriteMapper extends BaseMapper<Favorite> {
     
     /**

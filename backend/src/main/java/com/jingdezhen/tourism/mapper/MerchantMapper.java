@@ -2,11 +2,9 @@ package com.jingdezhen.tourism.mapper;
 
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.jingdezhen.tourism.entity.Merchant;
-import org.apache.ibatis.annotations.Mapper;
 
 /**
  * 商户Mapper
  */
-@Mapper
 public interface MerchantMapper extends BaseMapper<Merchant> {
 }

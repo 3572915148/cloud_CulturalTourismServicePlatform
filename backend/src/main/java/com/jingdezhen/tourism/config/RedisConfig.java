@@ -56,6 +56,8 @@ public class RedisConfig {
         public static final String LOCK = "lock:";
         /** 商品库存前缀 */
         public static final String STOCK = "stock:product:";
+        /** 产品列表缓存前缀 */
+        public static final String PRODUCT_LIST = "product:list:";
     }
     
     /**
@@ -74,6 +76,8 @@ public class RedisConfig {
         public static final long NULL_CACHE = 5 * 60;
         /** 分布式锁过期时间：10秒 */
         public static final long LOCK = 10;
+        /** 产品列表缓存过期时间：1天 */
+        public static final long PRODUCT_LIST = 60 * 60 * 24;
     }
     
     /**
