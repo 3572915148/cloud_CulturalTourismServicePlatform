@@ -1,0 +1,29 @@
+server:
+  port: 8088
+
+spring:
+  application:
+    name: file-service
+  config:
+    import:
+      - optional:nacos:file-service.yml
+  servlet:
+    multipart:
+      enabled: true
+      max-file-size: 10MB
+      max-request-size: 10MB
+  cloud:
+    nacos:
+      discovery:
+        server-addr: localhost:8848
+      config:
+        server-addr: localhost:8848
+        namespace: public
+        group: DEFAULT_GROUP
+        file-extension: yml
+
+file:
+  upload:
+    path: ./uploads/
+    base-url: http://localhost:8080/api/file/
+

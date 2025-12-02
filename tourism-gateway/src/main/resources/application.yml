@@ -1,0 +1,194 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: tourism-gateway
+  main:
+    web-application-type: reactive
+  config:
+    import:
+      - optional:nacos:tourism-gateway.yml
+  cloud:
+    compatibility-verifier:
+      enabled: false
+    loadbalancer:
+      enabled: true
+    gateway:
+      discovery:
+        locator:
+          enabled: false
+      routes:
+        # 用户服务（支持 /api/user/** 和 /user/** 两种路径）
+        - id: user-service-api
+          uri: lb://user-service
+          predicates:
+            - Path=/api/user/**
+          filters:
+            - StripPrefix=1
+        - id: user-service-direct
+          uri: lb://user-service
+          predicates:
+            - Path=/user/**
+          order: 1
+        # 商户服务（支持 /api/merchant/** 和 /merchant/** 两种路径）
+        - id: merchant-service-api
+          uri: lb://merchant-service
+          predicates:
+            - Path=/api/merchant/**
+          filters:
+            - StripPrefix=1
+        - id: merchant-service-direct
+          uri: lb://merchant-service
+          predicates:
+            - Path=/merchant/**
+          order: 1
+        # 管理员商户管理（支持 /api/admin/merchant/** 和 /admin/merchant/** 两种路径，属于 merchant-service）
+        - id: admin-merchant-service-api
+          uri: lb://merchant-service
+          predicates:
+            - Path=/api/admin/merchant/**
+          filters:
+            - StripPrefix=1
+        - id: admin-merchant-service-direct
+          uri: lb://merchant-service
+          predicates:
+            - Path=/admin/merchant/**
+          order: 1
+        # 商品服务（支持 /api/product/** 和 /product/** 两种路径）
+        - id: product-service-api
+          uri: lb://product-service
+          predicates:
+            - Path=/api/product/**
+          filters:
+            - StripPrefix=1
+        - id: product-service-direct
+          uri: lb://product-service
+          predicates:
+            - Path=/product/**
+          order: 1
+        # 商品分类服务（支持 /api/category/** 和 /category/** 两种路径，属于 product-service）
+        - id: category-service-api
+          uri: lb://product-service
+          predicates:
+            - Path=/api/category/**
+          filters:
+            - StripPrefix=1
+        - id: category-service-direct
+          uri: lb://product-service
+          predicates:
+            - Path=/category/**
+          order: 1
+        # 订单服务（支持 /api/order/** 和 /order/** 两种路径）
+        - id: order-service-api
+          uri: lb://order-service
+          predicates:
+            - Path=/api/order/**
+          filters:
+            - StripPrefix=1
+        - id: order-service-direct
+          uri: lb://order-service
+          predicates:
+            - Path=/order/**
+          order: 1
+        # 评价服务（支持 /api/review/** 和 /review/** 两种路径）
+        - id: review-service-api
+          uri: lb://review-service
+          predicates:
+            - Path=/api/review/**
+          filters:
+            - StripPrefix=1
+        - id: review-service-direct
+          uri: lb://review-service
+          predicates:
+            - Path=/review/**
+          order: 1
+        # 内容服务（支持 /api/ceramic/**,/api/content/** 和 /ceramic/**,/content/** 两种路径）
+        - id: content-service-api
+          uri: lb://content-service
+          predicates:
+            - Path=/api/ceramic/**,/api/content/**
+          filters:
+            - StripPrefix=1
+        - id: content-service-direct
+          uri: lb://content-service
+          predicates:
+            - Path=/ceramic/**,/content/**
+          order: 1
+        # AI服务（支持 /api/ai/**,/api/agent/**,/api/mcp/** 和 /ai/**,/agent/**,/mcp/** 两种路径）
+        - id: ai-service-api
+          uri: lb://ai-service
+          predicates:
+            - Path=/api/ai/**,/api/agent/**,/api/mcp/**
+          filters:
+            - StripPrefix=1
+        - id: ai-service-direct
+          uri: lb://ai-service
+          predicates:
+            - Path=/ai/**,/agent/**,/mcp/**
+          order: 1
+        # 文件服务（支持 /api/file/** 和 /file/** 两种路径）
+        - id: file-service-api
+          uri: lb://file-service
+          predicates:
+            - Path=/api/file/**
+          filters:
+            - StripPrefix=1
+        - id: file-service-direct
+          uri: lb://file-service
+          predicates:
+            - Path=/file/**
+          order: 1
+        # 收藏服务（支持 /api/favorite/** 和 /favorite/** 两种路径）
+        - id: favorite-service-api
+          uri: lb://favorite-service
+          predicates:
+            - Path=/api/favorite/**
+          filters:
+            - StripPrefix=1
+        - id: favorite-service-direct
+          uri: lb://favorite-service
+          predicates:
+            - Path=/favorite/**
+          order: 1
+        # 反馈服务（支持 /api/feedback/** 和 /feedback/** 两种路径）
+        - id: feedback-service-api
+          uri: lb://feedback-service
+          predicates:
+            - Path=/api/feedback/**
+          filters:
+            - StripPrefix=1
+        - id: feedback-service-direct
+          uri: lb://feedback-service
+          predicates:
+            - Path=/feedback/**
+          order: 1
+      httpclient:
+        connect-timeout: 3000
+        response-timeout: 10s
+      globalcors:
+        cors-configurations:
+          '[/**]':
+            allowedOriginPatterns: "*"
+            allowedMethods: "*"
+            allowedHeaders: "*"
+            allowCredentials: true
+    nacos:
+      discovery:
+        server-addr: localhost:8848
+        namespace: public
+        group: DEFAULT_GROUP
+      config:
+        server-addr: localhost:8848
+        namespace: public
+        group: DEFAULT_GROUP
+        file-extension: yml
+
+logging:
+  level:
+    org.springframework.cloud.gateway: debug
+    org.springframework.cloud.loadbalancer: debug
+    com.alibaba.cloud.nacos: debug
+    com.jingdezhen.tourism: debug
+    reactor.netty: debug
+

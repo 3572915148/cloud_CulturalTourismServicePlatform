@@ -7,17 +7,43 @@
         <sourceOutputDir name="target/generated-sources/annotations" />
         <sourceTestOutputDir name="target/generated-test-sources/test-annotations" />
         <outputRelativeToContentRoot value="true" />
+        <module name="tourism-common" />
+        <module name="review-service" />
+        <module name="merchant-service" />
+        <module name="product-service" />
+        <module name="user-service" />
+        <module name="feedback-service" />
+        <module name="file-service" />
+        <module name="ai-service" />
+        <module name="favorite-service" />
+        <module name="tourism-gateway" />
+        <module name="content-service" />
         <module name="backend" />
+        <module name="order-service" />
       </profile>
     </annotationProcessing>
     <bytecodeTargetLevel>
       <module name="demo" target="17" />
+      <module name="tourism-platform" target="17" />
     </bytecodeTargetLevel>
   </component>
   <component name="JavacSettings">
     <option name="ADDITIONAL_OPTIONS_OVERRIDE">
+      <module name="ai-service" options="-parameters" />
       <module name="backend" options="-parameters" />
+      <module name="content-service" options="-parameters" />
       <module name="demo" options="-parameters" />
+      <module name="favorite-service" options="-parameters" />
+      <module name="feedback-service" options="-parameters" />
+      <module name="file-service" options="-parameters" />
+      <module name="merchant-service" options="-parameters" />
+      <module name="order-service" options="-parameters" />
+      <module name="product-service" options="-parameters" />
+      <module name="review-service" options="-parameters" />
+      <module name="tourism-common" options="-parameters" />
+      <module name="tourism-gateway" options="-parameters" />
+      <module name="tourism-platform" options="-parameters" />
+      <module name="user-service" options="-parameters" />
     </option>
   </component>
 </project>

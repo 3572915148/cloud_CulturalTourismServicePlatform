@@ -1,0 +1,35 @@
+server:
+  port: 8087
+
+spring:
+  application:
+    name: ai-service
+  config:
+    import:
+      - optional:nacos:ai-service.yml
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://localhost:3306/jingdezhen_tourism?useUnicode=true&characterEncoding=UTF-8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
+    username: root
+    password: ${DB_PASSWORD:your-db-password}
+  cloud:
+    nacos:
+      discovery:
+        server-addr: localhost:8848
+      config:
+        server-addr: localhost:8848
+        namespace: public
+        group: DEFAULT_GROUP
+        file-extension: yml
+
+mybatis-plus:
+  mapper-locations: classpath:mapper/*.xml
+  type-aliases-package: com.jingdezhen.tourism.common.entity
+
+# DeepSeek API配置
+ai:
+  deepseek:
+    api-key: ${DEEPSEEK_API_KEY:sk-your-deepseek-api-key}
+    model: deepseek-chat
+    api-url: https://api.deepseek.com/v1/chat/completions
+
