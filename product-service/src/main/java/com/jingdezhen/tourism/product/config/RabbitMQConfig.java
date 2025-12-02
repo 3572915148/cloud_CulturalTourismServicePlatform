@@ -65,6 +65,10 @@ public class RabbitMQConfig {
         factory.setConnectionFactory(connectionFactory);
         factory.setMessageConverter(messageConverter());
         factory.setAcknowledgeMode(AcknowledgeMode.MANUAL);
+        // 设置连接失败时不影响应用启动（开发环境友好）
+        factory.setMissingQueuesFatal(false);
+        // 设置自动恢复连接
+        factory.setAutoStartup(true);
         return factory;
     }
 
